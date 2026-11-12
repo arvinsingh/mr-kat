@@ -155,6 +155,11 @@ export class Store {
       .prepare('SELECT * FROM cases WHERE guild=? AND id=?')
       .get(guild, caseId) as unknown as Case | undefined;
   }
+  warningCases(guild: string, target: string): Case[] {
+    return this.db
+      .prepare("SELECT * FROM cases WHERE guild=? AND target=? AND action='warn' ORDER BY id DESC")
+      .all(guild, target) as unknown as Case[];
+  }
   job(
     guild: string,
     actor: string,
@@ -268,6 +273,13 @@ export class Store {
         )
         .run(guild, cutoff);
       const retentionKinds = [
+        'purgeEvidence',
+        'channelSendReceipt',
+        'caseEvidence',
+        'warningRevocation',
+        'warningEscalation',
+        'ticketClosure',
+        'roleMentionIncident',
         'uwuSource',
         'uwuDraft',
         'uwuPost',
@@ -310,6 +322,9 @@ export class Store {
         .run(guild, Date.now() - 600000);
       for (const kind of [
         'reportDraft',
+        'moderationDraft',
+        'warningPanel',
+        'warningForm',
         'approval',
         'voiceCooldown',
         'voiceFailureNotice',

@@ -1,8 +1,11 @@
 // Resolve environment and relative data paths from the project root on any host.
 import { existsSync } from 'node:fs';
+import { setDefaultResultOrder } from 'node:dns';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadEnvFile } from 'node:process';
+
+setDefaultResultOrder('ipv4first');
 
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major !== 24 || minor < 13)

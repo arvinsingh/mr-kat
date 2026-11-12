@@ -3,7 +3,7 @@ import { embed, noMentions } from './ui.js';
 import type { Tone } from './ui.js';
 import { safe } from './util.js';
 import { randomUUID } from 'node:crypto';
-import type { ActionRowBuilder, ButtonBuilder } from 'discord.js';
+import type { ActionRowBuilder, ButtonBuilder, AttachmentBuilder } from 'discord.js';
 
 export type Delivery = 'sent' | 'blocked' | 'failed' | 'uncertain';
 // Never log Discord request bodies: they can contain private messages or participant IDs.
@@ -14,12 +14,14 @@ export async function directMessage(
   text: string,
   tone: Tone = 'info',
   components: ActionRowBuilder<ButtonBuilder>[] = [],
+  files: AttachmentBuilder[] = [],
 ): Promise<Delivery> {
   try {
     const recipient = await app.client.users.fetch(user);
     await recipient.send({
       embeds: [embed(title, text, tone)],
       components,
+      ...(files.length ? { files } : {}),
       allowedMentions: noMentions,
       nonce: randomUUID().replaceAll('-', '').slice(0, 24),
       enforceNonce: true,

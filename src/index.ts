@@ -1,4 +1,5 @@
 import { Client, Events, GatewayIntentBits, Options, Partials } from 'discord.js';
+import { setDefaultResultOrder } from 'node:dns';
 import { Store } from './store.js';
 import { environment, type LogKind } from './config.js';
 import type { App } from './types.js';
@@ -16,6 +17,9 @@ import { databaseLock } from './database-lock.js';
 import { maintainBackups } from './backup-health.js';
 import { stopUwuReplacements } from './uwulock.js';
 import { stopUwuAuthorActions } from './modules/uwulock.js';
+
+// Prefer IPv4 when both address families are available.
+setDefaultResultOrder('ipv4first');
 
 async function main() {
   const env = environment();
@@ -66,10 +70,18 @@ async function main() {
       }
       auditPending++;
       try {
-        for (const page of auditPages(kind, title, description)) {
-          const message = await send(app, guild, channel, { embeds: [page] });
+        let firstMessage: string | undefined;
+        const pages = auditPages(kind, title, description);
+        for (const [index, page] of pages.entries()) {
+          if (index === 0 && options?.image) page.setImage(options.image);
+          const message = await send(app, guild, channel, {
+            embeds: [page],
+            ...(index === 0 && options?.files?.length ? { files: options.files } : {}),
+          });
           store.put(guild, 'logMessage', message.id, { channel, created: Date.now(), kind });
+          firstMessage ??= `https://discord.com/channels/${guild}/${channel}/${message.id}`;
         }
+        return firstMessage;
       } catch (error) {
         logError(`log destination ${kind}`, error);
       } finally {

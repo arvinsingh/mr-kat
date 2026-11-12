@@ -16,8 +16,10 @@ import { assert, safe, logError, errorText } from '../util.js';
 import { embed, reply, noMentions } from '../ui.js';
 import { missingChannel, textChannel } from '../discord.js';
 import { channelNotice } from '../notices.js';
+import { channelLabel } from '../channel-label.js';
 export interface VoiceRoom {
   owner: string;
+  name?: string;
   companion?: string;
   created: number;
   blocked: string[];
@@ -220,7 +222,7 @@ async function postVoiceControls(app: App, channel: VoiceChannel, room: VoiceRoo
         channel.guild.id,
         'admin',
         'Voice room controls could not be confirmed',
-        `Room <#${channel.id}> is created, but its command message could not be confirmed. Check Send Messages and Embed Links. Use /voice panel while connected.`,
+        `Room ${channelLabel(channel.id, channel.name)} is created, but its command message could not be confirmed. Check Send Messages and Embed Links. Use /voice panel while connected.`,
         { force: true },
       )
       .catch((failure) => logError('voice controls log', failure));
@@ -237,7 +239,7 @@ export async function voiceEvent(app: App, oldState: VoiceState, next: VoiceStat
         guild.id,
         'voice',
         'Voice movement',
-        `<@${next.id}>: ${oldState.channelId ? `<#${oldState.channelId}>` : 'disconnected'} → ${next.channelId ? `<#${next.channelId}>` : 'disconnected'}`,
+        `<@${next.id}>: ${oldState.channelId ? channelLabel(oldState.channelId, oldState.channel?.name) : 'disconnected'} → ${next.channelId ? channelLabel(next.channelId, next.channel?.name) : 'disconnected'}`,
       )
       .catch((error) => logError('voice movement log', error));
     if (cfg.modules.stats) {
@@ -352,7 +354,13 @@ export async function voiceEvent(app: App, oldState: VoiceState, next: VoiceStat
       ],
       reason: `Temporary room for ${next.id}`,
     });
-    const room: VoiceRoom = { owner: next.id, created: Date.now(), blocked: [], permitted: [] };
+    const room: VoiceRoom = {
+      owner: next.id,
+      name: created.name,
+      created: Date.now(),
+      blocked: [],
+      permitted: [],
+    };
     app.store.put(guild.id, 'voiceRoom', created.id, room);
     if (next.member.voice.channelId === cfg.voiceLobby) {
       await next.member.voice.setChannel(created, 'Join-to-create');
@@ -364,7 +372,7 @@ export async function voiceEvent(app: App, oldState: VoiceState, next: VoiceStat
           cfg.voiceNoticeChannel,
           'voice',
           'Temporary voice room created',
-          `Room: <#${created.id}>\nCreated by: <@${next.id}>\nCreated: <t:${Math.floor(room.created / 1000)}:F>\nThe room's built-in text chat contains commands and controls. Its owner can use /voice rename, limit, lock, unlock, permit, block and transfer; /voice panel opens controls. Another occupant can /voice claim after the owner leaves.\nThe room and its built-in text chat are deleted when empty. This creation notice remains.`,
+          `Room: ${channelLabel(created.id, created.name)}\nCreated by: <@${next.id}>\nCreated: <t:${Math.floor(room.created / 1000)}:F>\nThe room's built-in text chat contains commands and controls. Its owner can use /voice rename, limit, lock, unlock, permit, block and transfer; /voice panel opens controls. Another occupant can /voice claim after the owner leaves.\nThe room and its built-in text chat are deleted when empty. This creation notice remains.`,
         );
     } else await removeRoom(app, created, room);
   } catch (error) {

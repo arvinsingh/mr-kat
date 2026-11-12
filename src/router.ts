@@ -1,3 +1,5 @@
+import { roleMentions } from './modules/role-mentions.js';
+import { warnings, applyWarningPolicy } from './modules/warnings.js';
 import {
   MessageFlags,
   PermissionFlagsBits as P,
@@ -16,7 +18,8 @@ import { roles } from './modules/roles.js';
 import { channels, lockChannel, restoreLock } from './modules/channels.js';
 import { messages, deliverEveryoneAnnouncement } from './modules/messages.js';
 import { voice } from './modules/voice.js';
-import { tickets } from './modules/tickets.js';
+import { tickets, deleteTicketChannel } from './modules/tickets.js';
+import { evidenceControls, moderationEvidenceMenu } from './modules/evidence.js';
 import { community } from './modules/community.js';
 import { automod } from './modules/automod.js';
 import { help } from './modules/help.js';
@@ -38,6 +41,9 @@ import { assert, UserError, errorText, logError } from './util.js';
 import { enabled, manageableRole, requirePermission, botPermission } from './permissions.js';
 
 const features: Module[] = [
+  evidenceControls,
+  roleMentions,
+  warnings,
   admin,
   moderation,
   roles,
@@ -64,6 +70,8 @@ export const handlers = Object.assign({}, ...features.map((m) => m.commands ?? {
 >;
 const inFlight = new Set<string>();
 export async function confirmation(app: App, i: Component, pending: Confirmation) {
+  if (pending.kind === 'warningPolicy') return applyWarningPolicy(app, i, pending);
+  if (pending.kind === 'ticketDelete') return deleteTicketChannel(app, i, pending);
   if (pending.kind === 'uwuClear') {
     await clearUwuLocks(app, i, pending);
     return;
@@ -150,7 +158,7 @@ export async function confirmation(app: App, i: Component, pending: Confirmation
         channel.id,
         'moderation',
         'Panic mode is in effect',
-        `Activated by <@${i.user.id}> at <t:${Math.floor(Date.now() / 1000)}:F>.\nIncident restrictions are active in this channel and verification is paused. Staff will post an update when panic mode ends.`,
+        `Activated at <t:${Math.floor(Date.now() / 1000)}:F>.\nIncident restrictions are active in this channel and verification is paused. Staff will post an update when panic mode ends.`,
       );
     }
     await app.audit(
@@ -182,7 +190,7 @@ export async function confirmation(app: App, i: Component, pending: Confirmation
           channel.id,
           'admin',
           'Panic mode ended',
-          `Restored by <@${i.user.id}> at <t:${Math.floor(Date.now() / 1000)}:F>.\nThis channel's pre-panic permissions have been restored. Other server restrictions may still apply.`,
+          `Restored at <t:${Math.floor(Date.now() / 1000)}:F>.\nThis channel's pre-panic permissions have been restored. Other server restrictions may still apply.`,
         );
       }
       state.channels = state.channels.filter((c) => c !== key);
@@ -237,14 +245,24 @@ export async function route(app: App, raw: DiscordInteraction) {
         raw.commandName === 'announce' &&
         ['builder', 'everyone'].includes(raw.options.getSubcommand())) ||
       (raw.isChatInputCommand() && raw.commandName === 'confess') ||
+      (raw.isChatInputCommand() &&
+        raw.commandName === 'say' &&
+        !raw.options.getString('message')) ||
+      (raw.isStringSelectMenu?.() && raw.customId.startsWith('evidence:action:')) ||
       (raw.isButton() &&
-        (raw.customId === 'ticket:open' || raw.customId.startsWith('confession:reply:')));
+        (raw.customId === 'ticket:open' ||
+          raw.customId.startsWith('confession:reply:') ||
+          /^warnings:(revoke|duration):/.test(raw.customId)));
     if (!modal) {
       if (
         (raw.isButton() && raw.customId.startsWith('help:')) ||
         (raw.isStringSelectMenu?.() && raw.customId.startsWith('textEffect:')) ||
         ((raw.isButton() || raw.isAnySelectMenu?.()) &&
-          /^(health|backup|uwuPanel):/.test(raw.customId))
+          /^(health|backup|uwuPanel):/.test(raw.customId)) ||
+        ((raw.isButton() || raw.isAnySelectMenu?.()) &&
+          raw.customId.startsWith('warnings:') &&
+          !raw.customId.startsWith('warnings:apply:')) ||
+        (raw.isModalSubmit() && raw.customId.startsWith('warnings:') && raw.isFromMessage())
       )
         await raw.deferUpdate();
       else {
@@ -261,6 +279,11 @@ export async function route(app: App, raw: DiscordInteraction) {
       return;
     }
     if (raw.isMessageContextMenuCommand()) {
+      if (raw.commandName === 'Moderate with evidence') {
+        await raw.deferReply({ flags: MessageFlags.Ephemeral });
+        await moderationEvidenceMenu(app, raw);
+        return;
+      }
       if (['Edit transformed message', 'Delete transformed message'].includes(raw.commandName)) {
         if (raw.commandName === 'Delete transformed message')
           await raw.deferReply({ flags: MessageFlags.Ephemeral });
@@ -278,16 +301,29 @@ export async function route(app: App, raw: DiscordInteraction) {
       const key = randomUUID();
       const cfg = app.store.config(raw.guildId);
       assert(cfg.logs.reports, 'Staff need to configure the reports destination first.');
+      assert(
+        raw.memberPermissions?.has([P.ViewChannel, P.ReadMessageHistory]) &&
+          raw.appPermissions?.has([P.ViewChannel, P.ReadMessageHistory]),
+        'You and the bot need View Channel and Read Message History for message evidence.',
+      );
+      const parent = raw.channel && 'parentId' in raw.channel ? raw.channel.parentId : null;
+      assert(
+        !cfg.excludedChannels.includes(target.channelId) &&
+          !(parent && cfg.excludedChannels.includes(parent)),
+        'Evidence capture is disabled in this channel.',
+      );
       app.store.put(raw.guildId, 'reportDraft', key, {
         actor: raw.user.id,
         target: target.author.id,
         message: {
           id: target.id,
           channel: target.channelId,
-          content: cfg.excludedChannels.includes(target.channelId)
-            ? '[Excluded channel]'
-            : target.content,
+          content: target.content,
           url: target.url,
+          author: target.author.id,
+          created: target.createdTimestamp,
+          capturedAt: Date.now(),
+          attachments: [...target.attachments.values()].map((a) => ({ name: a.name, url: a.url })),
         },
         expires: Date.now() + 300000,
       });

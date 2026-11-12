@@ -6,11 +6,11 @@ Run your own Discord application for one configured server per instance.
 
 ## Features
 
-- **Moderation:** warnings, timeouts, kicks, bans, appeals, reports, bulk purge, batch operations, lockdown, and panic mode.
-- **Logs and protection:** message edits/deletions, member/role/channel/voice changes, spam controls, and native Discord AutoMod setup.
+- **Moderation:** guided warning panels, warning revocation and configurable escalation, message evidence, appeals, reports, timeouts, kicks, bans, batch operations, lockdown, and panic mode.
+- **Logs and protection:** paginated purge records, message edits/deletions, avatar/role/channel/voice changes, protected-role mention redirects, spam controls, and native Discord AutoMod setup.
 - **Roles and onboarding:** self-service role menus, temporary and automatic roles, optional welcome DMs, exit messages, and verification.
-- **Voice and support:** join-to-create temporary voice rooms with ownership controls; private tickets with claiming, transcripts, and close/reopen controls.
-- **Community:** anonymous confessions with threaded replies and DM notifications, starboard, polls, suggestions, reminders, announcements, and saved tags.
+- **Voice and support:** join-to-create voice rooms with ownership controls; integrated ticket panels, staff-only reopen/delete controls, and closure-summary/transcript DMs.
+- **Community:** anonymous confessions with threaded replies and DM notifications, starboard, polls, suggestions, reminders, announcements, plain channel messages, and saved tags.
 - **Fun:** text effects, reply shortcuts, mention responses, a customizable Easter egg, and temporary server-wide or channel-specific UwU locks.
 - **Operations:** interactive setup, permission/health checks, heartbeat posts, persistent jobs, verified backups, and offline recovery tools.
 

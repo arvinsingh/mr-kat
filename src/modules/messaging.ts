@@ -1,9 +1,70 @@
-import { PermissionFlagsBits as P } from 'discord.js';
+import {
+  PermissionFlagsBits as P,
+  ModalBuilder,
+  ActionRowBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+} from 'discord.js';
 import type { App, Interaction, Module } from '../types.js';
 import { enabled, requirePermission } from '../permissions.js';
 import { assert, safe, safeMentions, renderTemplate } from '../util.js';
 import { confirm, reply, type Confirmation } from '../ui.js';
 import { directMessage } from '../dm.js';
+import { destination } from '../discord.js';
+import { noMentions } from '../ui.js';
+import { randomUUID } from 'node:crypto';
+
+async function sendChannelText(app: App, i: Interaction, channelId: string, text: string) {
+  enabled(app, i.guildId!, 'messages');
+  assert(text.trim().length > 0 && text.length <= 2000, 'Use 1–2,000 characters.');
+  const channel = await destination(app, i, channelId);
+  await requirePermission(app, i, P.ManageMessages, channel);
+  const key = i.id ?? randomUUID();
+  assert(
+    !app.store.get(i.guildId!, 'channelSendReceipt', key),
+    'This send has already been attempted; inspect the destination before retrying.',
+  );
+  app.store.put(i.guildId!, 'channelSendReceipt', key, {
+    channel: channelId,
+    state: 'sending',
+    actor: i.user.id,
+  });
+  try {
+    const message = await channel.send({
+      content: text,
+      allowedMentions: noMentions,
+      nonce: key.slice(-24),
+      enforceNonce: true,
+    });
+    app.store.put(i.guildId!, 'channelSendReceipt', key, {
+      channel: channelId,
+      state: 'sent',
+      message: message.id,
+      actor: i.user.id,
+    });
+  } catch (error) {
+    const rejected = typeof (error as { code?: unknown }).code === 'number';
+    app.store.put(i.guildId!, 'channelSendReceipt', key, {
+      channel: channelId,
+      state: rejected ? 'failed' : 'uncertain',
+      actor: i.user.id,
+    });
+    await reply(
+      i,
+      rejected
+        ? 'Discord rejected the message. Check destination permissions and retry after correcting the issue.'
+        : 'Delivery could not be confirmed. Inspect the destination before sending again; the message may have arrived.',
+    );
+    return;
+  }
+  await app.audit(
+    i.guildId!,
+    'admin',
+    'Channel message sent',
+    `Staff: <@${i.user.id}> · Destination: <#${channelId}>. Message body is not copied into this record.`,
+  );
+  await reply(i, `Message sent in <#${channelId}>.`);
+}
 
 export async function deliverStaffDM(app: App, i: Interaction, pending: Confirmation) {
   enabled(app, i.guildId!, 'messages');
@@ -29,6 +90,28 @@ export async function deliverStaffDM(app: App, i: Interaction, pending: Confirma
 }
 export const messaging: Module = {
   commands: {
+    say: async (app, i) => {
+      const channel = await destination(app, i, i.options.getChannel('channel', true).id);
+      await requirePermission(app, i, P.ManageMessages, channel);
+      enabled(app, i.guildId, 'messages');
+      const text = i.options.getString('message');
+      if (text) return sendChannelText(app, i, channel.id, text);
+      await i.showModal(
+        new ModalBuilder()
+          .setCustomId(`say:${channel.id}`)
+          .setTitle('Send a channel message')
+          .addComponents(
+            new ActionRowBuilder<TextInputBuilder>().addComponents(
+              new TextInputBuilder()
+                .setCustomId('message')
+                .setLabel('Message (Markdown; no mention pings)')
+                .setStyle(TextInputStyle.Paragraph)
+                .setRequired(true)
+                .setMaxLength(2000),
+            ),
+          ),
+      );
+    },
     dm: async (app, i) => {
       enabled(app, i.guildId, 'messages');
       await requirePermission(app, i, P.ManageGuild);
@@ -79,5 +162,10 @@ export const messaging: Module = {
         { target: target.id, text, reason: i.options.getString('reason', true) },
       );
     },
+  },
+  component: async (app, i) => {
+    if (!i.isModalSubmit() || !i.customId.startsWith('say:')) return false;
+    await sendChannelText(app, i, i.customId.split(':')[1]!, i.fields.getTextInputValue('message'));
+    return true;
   },
 };

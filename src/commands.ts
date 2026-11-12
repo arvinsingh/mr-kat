@@ -317,6 +317,48 @@ export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
     ],
     P.ManageGuild,
   ),
+  root(
+    'say',
+    'Staff: send a plain bot message to a server channel',
+    [c(), s('message', 'Message text (omit to open a multiline composer)')],
+    P.ManageMessages,
+  ),
+  root(
+    'mentionguard',
+    'Redirect protected-role mentions and detect repeated role pings',
+    [
+      sub('setup', 'Owner: configure roles and a support destination', [
+        s('roles', '1–25 protected role IDs or mentions', true),
+        {
+          ...c('channel', false),
+          description: 'Monitor this channel and its threads; omit for server-wide',
+        },
+        {
+          ...c('support_channel', false),
+          description: 'Optional support destination for the redirect reply',
+        },
+        n('limit', 'Repeat/mass-mention alert threshold', false, 2, 20),
+        n('seconds', 'Repeat detection window', false, 5, 300),
+      ]),
+      sub('status', 'Inspect mention redirect settings and prevention limits'),
+      sub('disable', 'Owner: disable mention redirects'),
+    ],
+    P.ManageGuild,
+  ),
+  root('warnings', 'Warning history, revocation and automatic escalation', [
+    sub('panel', 'Open the guided private warnings panel', [u('member', false)]),
+    sub('list', 'View your warnings; staff can inspect another member', [u('member', false)]),
+    sub('status', 'Staff: inspect the warning policy'),
+    sub('revoke', 'Staff: revoke a warning without erasing history', [
+      n('case', 'Warning case number', true, 1, 2147483647),
+      s('reason', 'Why this warning is revoked', true),
+    ]),
+    sub('configure', 'Owner: configure automatic warning escalation', [
+      n('threshold', 'Active warnings needed (0 disables)', true, 0, 20),
+      s('action', 'Action at threshold', true, ['none', 'timeout', 'kick']),
+      n('timeout_minutes', 'Timeout duration when action is timeout', false, 1, 1440),
+    ]),
+  ]),
   root('status', 'Bot connection and job status'),
   root(
     'diagnose',
@@ -332,6 +374,7 @@ export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
         u(),
         s('reason', 'Reason', true),
         s('expires', 'Optional expiry such as 30d'),
+        s('evidence', 'Optional message link or message ID from this channel'),
       ]),
       sub('timeout', 'Temporarily restrict a member', [
         u(),
@@ -339,11 +382,16 @@ export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
         s('reason', 'Reason', true),
       ]),
       sub('untimeout', 'Remove a timeout', [u(), s('reason', 'Reason', true)]),
-      sub('kick', 'Kick a member', [u(), s('reason', 'Reason', true)]),
+      sub('kick', 'Kick a member', [
+        u(),
+        s('reason', 'Reason', true),
+        s('evidence', 'Optional message link or ID'),
+      ]),
       sub('ban', 'Ban a member; optional scheduled unban', [
         u(),
         s('reason', 'Reason', true),
         s('duration', 'Optional duration such as 7d'),
+        s('evidence', 'Optional message link or message ID from this channel'),
       ]),
       sub('unban', 'Unban a user', [
         s('user_id', 'Discord user ID', true),
@@ -351,6 +399,9 @@ export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
       ]),
       sub('info', 'Inspect a member', [u()]),
       sub('cases', 'Search moderation cases', [u('member', false)]),
+      sub('evidence', 'Staff: export captured message evidence for a case', [
+        n('case', 'Case number', true, 1, 2147483647),
+      ]),
       sub('nickname', 'Change a member nickname', [
         u(),
         s('name', 'New nickname (up to 32 characters)', true),
@@ -481,10 +532,15 @@ export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
     sub('open', 'Open a private ticket', [s('subject', 'What do you need help with?', true)]),
     sub('claim', 'Staff: claim this ticket'),
     sub('close', 'Close this ticket', [s('reason', 'Closure reason', true)]),
-    sub('reopen', 'Reopen this ticket'),
+    sub('reopen', 'Staff: reopen this ticket'),
+    sub('delete', 'Staff: confirm permanent deletion of a closed ticket channel'),
     sub('transcript', 'Staff: export this ticket transcript'),
   ]),
-  root('report', 'Privately report a member', [u(), s('reason', 'Report details', true)]),
+  root('report', 'Privately report a member', [
+    u(),
+    s('reason', 'Report details', true),
+    s('evidence', 'Optional message link or ID'),
+  ]),
   root('appeal', 'Submit an appeal to staff', [
     n('case', 'Case number', true, 1, 2147483647),
     s('reason', 'Appeal details', true),
@@ -505,6 +561,12 @@ export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
     ],
     P.ModerateMembers,
   ),
+  {
+    name: 'Moderate with evidence',
+    type: ApplicationCommandType.Message,
+    contexts: [0],
+    default_member_permissions: P.ModerateMembers.toString(),
+  },
   {
     name: 'Report message',
     type: ApplicationCommandType.Message,

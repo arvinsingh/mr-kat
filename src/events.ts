@@ -1,3 +1,5 @@
+import { roleMentionReply } from './role-mentions.js';
+import { memberAvatarChanged, userAvatarChanged } from './member-logs.js';
 import {
   Events,
   PermissionFlagsBits as P,
@@ -37,7 +39,7 @@ const stickyBusy = new Set<string>();
 
 export function events(app: App) {
   // EventEmitter does not await handlers. Every handler has its own rejection boundary.
-  const run = (context: string, fn: () => Promise<void>) => {
+  const run = (context: string, fn: () => Promise<unknown>) => {
     void fn().catch((error) => logError(context, error));
   };
   const reactionChanged = (
@@ -158,8 +160,9 @@ export function events(app: App) {
     if (member.guild.id === app.guildId)
       run('member update', async () => {
         if (old.pending && !member.pending) await onboardMember(app, member);
-        const added = member.roles.cache.filter((r) => !old.roles.cache.has(r.id)),
-          removed = old.roles.cache.filter((r) => !member.roles.cache.has(r.id));
+        await memberAvatarChanged(app, old, member);
+        const added = member.roles.cache.filter((r) => !old.partial && !old.roles.cache.has(r.id)),
+          removed = old.roles.cache.filter((r) => !old.partial && !member.roles.cache.has(r.id));
         for (const role of removed.values())
           app.store.delete(app.guildId, 'roleTimer', `${member.id}:${role.id}`);
         if (added.size || removed.size)
@@ -178,6 +181,9 @@ export function events(app: App) {
           );
       });
   });
+  app.client.on(Events.UserUpdate, (old, user) =>
+    run('profile picture update', () => userAvatarChanged(app, old, user)),
+  );
   app.client.on(Events.GuildBanRemove, (ban) => {
     if (ban.guild.id === app.guildId) {
       app.store.delete(app.guildId, 'banGeneration', ban.user.id);
@@ -422,7 +428,7 @@ async function messageCreate(app: App, message: Message) {
               message.channelId,
               'moderation',
               `Automatic action #${caseId}`,
-              `Member: <@${member.id}>\nApplied by: <@${me.id}>\nTime: <t:${Math.floor(Date.now() / 1000)}:F>\nReason: ${safe(reason)}\nMessage deleted: ${deleted ? 'yes' : 'no'}${timedOut ? `\nTimeout: ${cfg.automod.timeoutMinutes} minutes.` : ''}`,
+              `Member: <@${member.id}>\nTime: <t:${Math.floor(Date.now() / 1000)}:F>\nReason: ${safe(reason)}\nMessage deleted: ${deleted ? 'yes' : 'no'}${timedOut ? `\nTimeout: ${cfg.automod.timeoutMinutes} minutes.` : ''}`,
             );
             if (timedOut)
               await moderationNotice(
@@ -465,6 +471,12 @@ async function messageCreate(app: App, message: Message) {
       }
     }
   }
-  if (!spamDetected && !(await replyTextCommand(app, message)) && !(await uwuMessage(app, message)))
+  const protectedMention = await roleMentionReply(app, message);
+  if (
+    !spamDetected &&
+    !protectedMention &&
+    !(await replyTextCommand(app, message)) &&
+    !(await uwuMessage(app, message))
+  )
     await mentionReply(app, message);
 }

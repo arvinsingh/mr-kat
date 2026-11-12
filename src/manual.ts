@@ -22,6 +22,46 @@ interface Overview {
   notes: string[];
 }
 const overviews: Record<string, Overview> = {
+  warnings: {
+    purpose:
+      'Use a guided private dashboard to inspect warnings, revoke invalid cases and configure automatic escalation.',
+    examples: [
+      '/warnings panel',
+      '/warnings list',
+      '/warnings list member:@Member',
+      '/warnings revoke case:12 reason:Appeal accepted',
+      '/warnings configure threshold:3 action:kick',
+      '/warnings status',
+    ],
+    notes: [
+      'Members can inspect only their own warnings. Staff with Moderate Members and staff allowlist access can inspect others or revoke a warning. /warnings panel and list open the same private dashboard: staff get a member picker, everyone can select a warning to read its full reason, and authorized staff get Revoke with a private reason form. Previous/Next/Refresh browse history; long details have separate page buttons. Ordinary members cannot inspect others or revoke warnings. Active, expired, revoked and total retained counts are distinct; only active warnings count toward escalation. Original cases are never erased by revocation.',
+      'The owner sees Warning policy: action and threshold dropdowns, a Timeout duration form, saved settings and bot permission checks. These edits are drafts; Review changes opens a separate Confirm/Cancel prompt, preserving the dashboard. Reload saved policy discards the draft. Stale previews cannot overwrite a newer policy. The configure command remains an alternative and also opens confirmation. Choose none, timeout or kick; threshold 0 disables automatic action. Timeout duration is configurable. Existing warningThreshold configurations retain timeout behavior until changed. Changes apply on future warnings, not retroactively. Bot permissions, hierarchy and protected members still apply. Automatic kicks respect secondApproval and revalidate warnings/policy after DMs and at approval. Failed or uncertain enforcement does not erase the warning or automatically replay removal.',
+      'Accepting an appeal for a warning revokes it and reduces the active count. /warnings revoke does the same directly and notifies the member without staff identity. Revoking a warning does not undo a historical timeout or rejoin a kicked member. Kicked users cannot invoke server commands until they rejoin; use an outside-server contact route for those appeals. Counts cover retained database history, not records already deleted by retentionDays. Panels expire in ten minutes and forms in five; actor, channel, selected member/case and current permissions are rechecked. Submitted forms cannot be reused.',
+    ],
+  },
+  say: {
+    purpose:
+      'Send a plain bot-authored message into an accessible server channel, without exposing the requesting staff member.',
+    examples: ['/say channel:#general message:Welcome everyone!', '/say channel:#general'],
+    notes: [
+      'Staff need Manage Messages and the staff allowlist, plus permission to post in the destination. The bot must also be able to post. Omit message to open a multiline composer (2,000 characters). Markdown and native references display normally; mention notifications are suppressed, including everyone/here.',
+      'Messages are permanent channel posts; acknowledgements are private. Actor/destination are recorded privately; the audit receipt does not copy the body. Uncertain delivery is not retried automatically.',
+    ],
+  },
+  mentionguard: {
+    purpose:
+      'Redirect protected-role mentions to support and alert staff about repeated role pings, without deleting the original message.',
+    examples: [
+      '/mentionguard setup roles:ROLE_ID_1,ROLE_ID_2 support_channel:#support limit:3 seconds:30',
+      '/mentionguard status',
+      '/mentionguard disable',
+    ],
+    notes: [
+      'Owner-only setup/disable; status requires Manage Server and the staff allowlist. The automod module must be enabled. Role IDs/mentions choose protected roles. Omit channel for server-wide monitoring; supplying channel restricts monitoring to it and its threads. support_channel independently selects the support redirect destination; omitting it preserves any previously configured support link, otherwise replies suggest /ticket open. Existing configurations keep their server-wide scope. The default alert threshold is three role-mention messages in 30 seconds across channels, or three distinct roles in one message. Administrator accounts and configured exemptRoles are exempt.',
+      'Deleting a message cannot retract delivered notifications. This redirect guard never deletes messages or cancels pings. For prevention, make roles unmentionable and restrict Mention Everyone/All Roles, or configure a native per-message rule with /automod mentions. Existing independent AutoMod rules may still moderate messages.',
+      'Owner can edit roleMentions.exemptRoles and responses using configuration export/import. Automatic replies are bounded to one per sender per 15 seconds to avoid bot floods; commands have no waiting-period cooldown. Support-channel links are shown only to members who can access the destination. Incident records follow retentionDays.',
+    ],
+  },
   uwulock: {
     purpose:
       'Temporarily transform a selected member’s new messages server-wide, or in one selected channel, using a webhook with their display name/avatar.',
@@ -195,9 +235,11 @@ const overviews: Record<string, Overview> = {
       '/mod cases member:@Member',
     ],
     notes: [
+      'MESSAGE EVIDENCE: /mod warn, kick or ban accepts optional evidence:MESSAGE_LINK (or a message ID from the current channel). Apps → Moderate with evidence opens a private action picker and reason form. Message text, author, timestamps and attachment references are retained with the case; no screenshot/file-upload workflow is required. /mod evidence case:NUMBER exports retained evidence privately. Source permissions, staff roles and action-specific hierarchy are checked. Public reply shortcuts are not added because they reveal who typed them.',
+      'PRIVACY: public moderation notices and moderation DMs show the action, target, reason and case without naming the requesting/approving staff member. Private case/audit records retain actor and approval metadata. Discord native audit logs remain visible to authorized administrators.',
       'Warn records a case and attempts a DM; the warning remains recorded if DMs fail. Expiry affects active-warning counts.',
       'Warnings, timeouts and timeout removals attempt a one-way DM with reason/case details. Kick/ban notices are attempted after approval, before removal; they say removal will be attempted next. Failed DMs do not cancel punishment. Delivery status appears in the response and staff log.',
-      'Successful member actions also post a normal message in the original command channel with case, member, staff, time and reason. Two-person approval preserves that original channel. Use a staff channel if the reason is sensitive. Notes/case exports remain private. A failed channel notice is reported without reversing the completed action. Unbans also attempt a DM.',
+      'Successful member actions also post a normal message in the original command channel with case, member, time and reason; actor identities remain private. Two-person approval preserves that original channel. Use a staff channel if the reason is sensitive. Notes/case exports remain private. A failed channel notice is reported without reversing the completed action. Unbans also attempt a DM.',
       'Timeout maximum: 28 days. Kick/ban require confirmation; optional secondApproval requires another authorized staff member.',
       'Temporary bans use scheduled unbans; externally changed bans are not blindly removed.',
       'Notes, cases, corrections and exports are staff-only. Corrections append rather than erase history.',
@@ -212,11 +254,12 @@ const overviews: Record<string, Overview> = {
       '/purge count:10 contains:unwanted older:true',
     ],
     notes: [
+      'COMPLETE OPERATION LOG: content is persisted before deletion and Message purge logs display the requester, channel (with plain name), link to the moderation purge record, and username/text entries directly in bot messages. Overflow becomes numbered message pages; no downloadable transcript is sent. Failed/uncertain attempts are separated from confirmed deletions. Missing/pinned/unsupported-old messages are skipped, not claimed as deleted. Captured text survives cache eviction, bulk gateway events and interrupted jobs. Evidence follows retentionDays; original attachment links may expire. Do not confuse this operation transcript with general deletion events, which cannot recover content never cached/stored before deletion.',
       'Pinned messages are excluded. Scan and deletion counts are capped at 1000.',
       'Recent messages use bulk deletion in batches of 2–100. Singletons use one deletion. Messages near/over two weeks old are skipped unless older:true, then deleted individually because Discord forbids bulk deletion for them. Pins, permissions, module state and cancellation are checked during execution. A failed bulk request is recorded, not retried individually. Deletions cannot be undone.',
       'Use /jobs show for counts and failures, or /jobs cancel to stop remaining work.',
-      'Optional reason is shown in the confirmation and recorded with the job/batch logs. Message IDs, actor, source channel, time, full available pre-delete text and attachment references are captured for each eligible batch. Known purge deletions suppress duplicate generic gateway logs. Log destinations/excluded channels do not have their contents recopied; the moderation summary still records outcomes.',
-      'Pins/content are fetched fresh rather than trusting stale cache. Logs survive cache eviction because the purge captures the fetched messages before deleting them. Full text is paginated. Cancellation and permission/error stops also produce a final summary with processed/remaining counts.',
+      'Optional reason is shown in the confirmation and recorded with the job and complete operation transcript. Message IDs, actor, source channel, time, full available pre-delete text and attachment references are captured before each eligible deletion request. Known purge deletions suppress duplicate generic gateway logs. Log destinations/excluded channels do not have their contents recopied; the moderation summary still records outcomes.',
+      'Pins/content are fetched fresh rather than trusting stale cache. Logs survive cache eviction because the purge captures the fetched messages before deleting them. Full text appears directly in numbered bot-message pages for the whole operation, without a text attachment. Cancellation and permission/error stops also produce a final summary with processed/remaining counts.',
       'Deletion-acknowledged, skipped, failed/rejected and uncertain outcomes are separate. A timeout or interrupted request can already have deleted messages; uncertain batches are never automatically replayed. Recovery skips an in-flight batch and marks it uncertain. Gateway deduplication markers contain metadata only and expire after one day; they do not retain full message bodies in the database.',
     ],
   },
@@ -300,11 +343,11 @@ const overviews: Record<string, Overview> = {
       '/ticket close reason:Resolved',
     ],
     notes: [
-      'The owner must configure ticketCategory and staffRoles first. panel/claim/reopen/transcript are staff workflows.',
+      'The owner must configure ticketCategory and staffRoles first. Panels use integrated Discord Components V2 cards with text and buttons. Panel/claim/reopen/transcript are staff workflows; deletion additionally requires Manage Channels and confirmation.',
       'SETUP: create a Discord category called Support Tickets and a public #support channel. As owner: /config set key:ticketCategory value:"CATEGORY_ID", confirm; /config set key:staffRoles value:["MOD_ROLE_ID","ADMIN_ROLE_ID"], confirm; /config module name:tickets state:on. Give the bot Manage Channels, Manage Roles (Manage Permissions), View Channel, Send Messages, Embed Links and Read Message History. Grant support staff Manage Messages and include their role in staffRoles. Then /ticket panel channel:#support title:Contact staff description:Open a private ticket for help. Test the button with an ordinary member.',
       'Each ticket explicitly hides @everyone and allows only its creator, the bot and configured staff roles (Discord administrators can bypass this). If staffRoles is empty, ordinary staff roles will not be added to the ticket. There is no creation cooldown; one open ticket per member and 50 open tickets per server still apply.',
       'Claim assigns the current ticket to a staff member and posts a lasting Ticket claimed message inside that private channel, with their mention and time. Other staff may still help, but cannot claim over them. Repeated claims by the same person do not duplicate the notice. The ticket owner can close their ticket; closure hides it from its creator and staff can reopen it. Assignment is retained on reopen.',
-      'Transcripts are staff-only, capped at 1000 messages/4 MB. Attachment links may expire. Closed channels expire under retention.',
+      'Closing removes the creator’s channel access and attempts one DM containing Closed status, the original request, closing reason and a transcript (latest 1000 messages, at most 4 MB). Blocked/failed DMs and transcript failures are recorded for staff and do not undo closing. Staff transcript exports remain private. Attachment links can expire. Only staff can reopen; only closed channels can be deleted, with a fresh confirmation. Reopen/delete buttons survive bot restarts and recheck current permissions and ticket state. Closed channels expire under retention.',
     ],
   },
   report: {
@@ -312,7 +355,7 @@ const overviews: Record<string, Overview> = {
       'Privately report a member to staff. For a specific message use its Apps → Report message action.',
     examples: ['/report member:@Member reason:Harassment in general'],
     notes: [
-      'Reports need a configured private reports log. One submission per minute.',
+      'Reports need a configured private reports log. There is no command cooldown. Optional evidence accepts a same-server message link or a message ID from the current channel. Both the reporter and bot need source access. Message text is captured immediately; evidence contains references to original attachments rather than uploaded files.',
       'A reference is returned privately; staff review through /review. Do not post private evidence publicly.',
     ],
   },
@@ -321,7 +364,7 @@ const overviews: Record<string, Overview> = {
     examples: ['/appeal case:12 reason:Please review the context'],
     notes: [
       'You must still have server access. Banned members need another agreed submission route.',
-      'An accepted appeal records a decision; staff explicitly change the punishment separately.',
+      'Accepting a warning appeal revokes that warning and removes it from active escalation counts. For other case types staff explicitly change any punishment separately. Historical kicks/timeouts are not automatically undone.',
     ],
   },
   review: {
@@ -331,7 +374,7 @@ const overviews: Record<string, Overview> = {
       '/review resolve kind:appeals id:REFERENCE decision:accepted reason:Reviewed',
     ],
     notes: [
-      'Restricted to Moderate Members and the configured staff allowlist. Accepting an appeal does not automatically unban or remove a timeout.',
+      'Restricted to Moderate Members and the configured staff allowlist. Accepting a warning appeal revokes the warning. Other accepted appeals do not automatically unban, rejoin a kicked member or remove a timeout.',
     ],
   },
   announce: {
@@ -432,7 +475,7 @@ const overviews: Record<string, Overview> = {
     examples: ['/panic on channels:CHANNEL_ID_1,CHANNEL_ID_2', '/panic off'],
     notes: [
       'Both operations require confirmation. on preserves prior settings; off restores changes made by panic mode.',
-      'Each affected channel receives a normal Panic mode is in effect / Panic mode ended notice, including staff and time. The bot keeps its own writing permission during a lock, restoring it afterwards. Failed notice delivery is reported to the admin log. Messages remain after restoration.',
+      'Each affected channel receives a normal Panic mode is in effect / Panic mode ended notice, including time but no staff identity. The bot keeps its own writing permission during a lock, restoring it afterwards. Failed notice delivery is reported to the admin log. Messages remain after restoration.',
       'Manage Server plus Manage Channels/Manage Roles in selected channels are required. Administrators retain access.',
     ],
   },
@@ -581,6 +624,8 @@ const overviews: Record<string, Overview> = {
 };
 
 const memberPaths = new Set([
+  'warnings panel',
+  'warnings list',
   'poll create',
   'poll close',
   'ticket open',
@@ -601,6 +646,9 @@ const memberPaths = new Set([
   'voice panel',
 ]);
 const ownerPaths = new Set([
+  'warnings configure',
+  'mentionguard setup',
+  'mentionguard disable',
   'heartbeat setup',
   'heartbeat disable',
   'starboard setup',
@@ -612,6 +660,7 @@ const ownerPaths = new Set([
   'automod configure',
 ]);
 const memberRoots = new Set([
+  'warnings',
   'help',
   'man',
   'status',
@@ -665,6 +714,8 @@ export const topics: Topic[] = commands.flatMap((command) => {
           ? 'Member connected to a managed room whose owner has left'
           : 'Owner of your current managed voice room';
     if (path === 'ticket close') access = 'Ticket creator or authorized staff';
+    if (path === 'warnings list' || path === 'warnings panel')
+      access = 'Members: own history; Moderate Members and staff allowlist: other members';
     if (path === 'poll create') access = 'Members who can post in this channel';
     if (path === 'poll close')
       access = 'Poll creator; other polls require Manage Messages plus the staff allowlist';

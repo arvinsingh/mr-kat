@@ -5,6 +5,7 @@ import type {
   ModalSubmitInteraction,
   MessageContextMenuCommandInteraction,
   AnySelectMenuInteraction,
+  AttachmentBuilder,
 } from 'discord.js';
 import type { Store, Job } from './store.js';
 import type { LogKind } from './config.js';
@@ -24,8 +25,8 @@ export interface App {
     kind: LogKind,
     title: string,
     description: string,
-    options?: { force?: boolean },
-  ): Promise<void>;
+    options?: { force?: boolean; files?: AttachmentBuilder[]; image?: string },
+  ): Promise<string | void>;
   runJob(job: Job): Promise<void>;
 }
 export interface Module {

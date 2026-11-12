@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { defaultMentionResponses } from './mention-responses.js';
+import { roleMentionResponses } from './role-mentions.js';
 
 export const id = z.string().regex(/^\d{17,22}$/, 'Expected a Discord ID');
 export const modules = [
@@ -89,6 +90,29 @@ export const configSchema = z
           .default(() => [...defaultMentionResponses]),
       })
       .default(() => ({ enabled: true, responses: [...defaultMentionResponses] })),
+    roleMentions: z
+      .object({
+        enabled: z.boolean().default(false),
+        roles: z.array(id).max(25).default([]),
+        exemptRoles: z.array(id).max(25).default([]),
+        supportChannel: id.optional(),
+        channel: id.optional(),
+        repeatLimit: z.number().int().min(2).max(20).default(3),
+        windowSeconds: z.number().int().min(5).max(300).default(30),
+        responses: z
+          .array(z.string().trim().min(1).max(250))
+          .min(1)
+          .max(50)
+          .default(() => [...roleMentionResponses]),
+      })
+      .default(() => ({
+        enabled: false,
+        roles: [],
+        exemptRoles: [],
+        repeatLimit: 3,
+        windowSeconds: 30,
+        responses: [...roleMentionResponses],
+      })),
     starboard: z
       .object({
         enabled: z.boolean().default(false),
@@ -102,6 +126,7 @@ export const configSchema = z
     verificationPaused: z.boolean().default(false),
     secondApproval: z.boolean().default(false),
     warningThreshold: z.number().int().min(0).max(20).default(0),
+    warningAction: z.enum(['none', 'timeout', 'kick']).default('timeout'),
     warningTimeoutMinutes: z.number().int().min(1).max(1440).default(10),
     ticketCategory: id.optional(),
     voiceLobby: id.optional(),
@@ -208,7 +233,7 @@ export function environment() {
   const result = schema.safeParse(process.env);
   if (!result.success)
     throw new Error(
-      `Invalid environment: ${result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}. Copy .env.example to .env and set the three Discord values.`,
+      `Invalid environment: ${result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}. Copy .env.temp to .env and set the three Discord values.`,
     );
   return result.data;
 }

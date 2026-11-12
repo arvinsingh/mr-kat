@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 7 November 2026
+Last updated: 12 November 2026
 
 Mr. Kat is self-hosted software, not a centrally operated bot service. Each installation's operator controls its application, host, database, backups, settings, and access. Contact your server's administrators for the operator's privacy arrangements and data requests. Publishing this repository does not give its maintainer access to your installation.
 
@@ -9,18 +9,21 @@ Mr. Kat is self-hosted software, not a centrally operated bot service. Each inst
 The bot receives Discord events and interactions for its configured server. Depending on enabled features, it processes or stores:
 
 - User, server, channel, role, and message IDs; display names and avatars used in messages.
-- Moderation cases, reasons, reports, appeals, staff actions, configuration, and scheduled jobs.
+- Moderation cases, warning expiry/revocation/escalation records, reasons, reports, appeals, staff actions, configuration, and scheduled jobs.
+- Message evidence: captured text, author/message/channel IDs, timestamps, and attachment references. Evidence capture does not download attachments or require screenshot uploads.
 - Ticket metadata and transcripts; confession text, reply relationships, notification preferences, and internally linked participant IDs.
 - Role assignments, onboarding progress, managed voice rooms, activity counters, polls, suggestions, and starboard records.
 - Message text and attachment references needed for logging, purge records, announcements, tags, text effects, and UwU replacements/editing.
 
 Message Content access lets the bot process readable server messages for enabled features. It does not publish every message to a log. Optional persistent message snapshots default off (`snapshotDays: 0`); enabling them retains content for edit/deletion logs. Configured log messages, ticket transcripts, confessions, and transformed posts may disclose content to people who can access their destination.
 
+Purge operations capture available content before deletion and display usernames/text in paginated Discord log messages, linked to a moderation record when delivery succeeds. Protected-role mention redirects can retain repeat-mention incident details; the redirect itself leaves the original message intact. Members can inspect their own retained warnings; authorized staff can inspect others and revoke warnings. Revocation preserves the original case. Public moderation notices and recipient DMs omit staff attribution, but private records, host access, and Discord's audit log can identify staff.
+
 ## Confessions and DMs
 
 Internal confession linking retains user IDs for OP labels, anonymous reply aliases, and reply DMs. No in-bot identity lookup is provided to members, moderators, or the server owner. **This is not anonymity from the host/database operator, backups, or Discord.** It is not end-to-end encryption. Read the notice shown in the submission form and avoid identifying details.
 
-Automatic or staff-requested DMs may include welcome instructions, moderation notices, reminders, or confession replies. A successful send does not establish that someone read it. Reply notifications can be muted with the confession controls. Replies to the bot's DMs are not a monitored support inbox.
+Automatic or staff-requested DMs may include welcome instructions, moderation/revocation notices, ticket closure summaries and transcripts, reminders, or confession replies. Ticket closure removes the creator's channel access; the bot attempts to send the original request and a limited transcript to that member. Attachment references may expire. A successful send does not establish that someone read it. Reply notifications can be muted with the confession controls. Replies to the bot's DMs are not a monitored support inbox.
 
 ## Storage, recipients, and retention
 

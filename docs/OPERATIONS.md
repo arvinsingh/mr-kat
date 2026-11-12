@@ -19,6 +19,8 @@ Owner setup starts with `/setup`, `/diagnose`, and `/help audience:owners`. Perm
 5. Run `npm run commands` when command definitions change, then restart one instance.
 6. Confirm `Bot connected` in host logs and inspect `/diagnose` and `/jobs list`.
 
+Register commands after adding or updating features. Publish `/ticket panel` for the integrated support card, and use `/warnings panel` for the private warning dashboard. Warning escalation stays off unless configured; existing threshold settings retain timeout behavior. Review `/warnings status` and the owner policy controls before enabling automatic kicks. `/mentionguard setup` defaults to server-wide monitoring; optional `channel` limits scope, and `support_channel` selects the redirect destination.
+
 CI validates code only. Configure deployment for your chosen host separately. Keeping previous code does not make database rollback automatic; review compatibility before switching versions.
 
 ## Back up
@@ -47,6 +49,7 @@ After recovery, start one instance and reconcile `/diagnose`, `/backup`, `/jobs 
 - **Commands missing:** build, register commands for the configured server, and check Server Settings → Integrations for command restrictions.
 - **Permission failures:** inspect native member/bot permissions, channel overrides, privileged intents, role positions, configured staff roles, and enabled modules.
 - **DM failures:** users can block server DMs; public operation success does not guarantee DM delivery.
+- **Discord connectivity:** startup and command registration prefer IPv4 when both address families are available. This does not fix a failing host/container DNS resolver or blocked outbound traffic.
 - **Scheduled work:** failed or uncertain sends are retained for review rather than blindly resent. Inspect the destination before rescheduling.
 
 Database files, backups, transcripts, host logs, and recovery copies are private operator data. See [the privacy policy](../PRIVACY.md) and [security guidance](../SECURITY.md).

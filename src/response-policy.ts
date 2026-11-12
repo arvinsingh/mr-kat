@@ -12,20 +12,24 @@ const groups: Record<ResponsePolicy, string[]> = {
     'voice block',
     'voice transfer',
     'voice claim',
-    'channel lock',
-    'channel unlock',
-    'channel slowmode',
-    'channel archive',
-    'channel unarchive',
     'tag set',
     'tag delete',
     'sticky set',
     'sticky remove',
   ],
   staff: [
+    'warnings configure',
+    'warnings revoke',
+    'channel lock',
+    'channel unlock',
+    'channel slowmode',
+    'channel archive',
+    'channel unarchive',
     'uwulock add',
     'uwulock remove',
     'uwulock clear',
+    'mentionguard setup',
+    'mentionguard disable',
     'heartbeat setup',
     'heartbeat disable',
     'setup',
@@ -75,6 +79,7 @@ const groups: Record<ResponsePolicy, string[]> = {
     'verify deny',
     'ticket claim',
     'ticket reopen',
+    'ticket delete',
     'review resolve',
     'announce schedule',
     'event',
@@ -100,15 +105,20 @@ const groups: Record<ResponsePolicy, string[]> = {
     'poll close',
     'suggest create',
     'suggest status',
+    'say',
     'announce send',
     'announce edit',
     'announce builder',
     'announce everyone',
   ],
   private: [
+    'warnings panel',
+    'warnings list',
+    'warnings status',
     'uwulock panel',
     'uwulock list',
     'uwulock stats',
+    'mentionguard status',
     'heartbeat status',
     'help',
     'man',
@@ -142,6 +152,7 @@ const groups: Record<ResponsePolicy, string[]> = {
     'verify pending',
     'ticket open',
     'ticket close',
+    'mod evidence',
     'ticket transcript',
     'review list',
     'tag get',
@@ -160,6 +171,8 @@ export const responsePolicies = Object.fromEntries(
   Object.entries(groups).flatMap(([policy, paths]) => paths.map((path) => [path, policy])),
 ) as Record<string, ResponsePolicy>;
 export function responsePath(i: Interaction): string {
+  if (i.isModalSubmit?.() && i.customId.startsWith('warnings:form-revoke:'))
+    return 'warnings revoke';
   if (i.isButton?.() && /^uwuPanel:(add|remove):/.test(i.customId))
     return `uwulock ${i.customId.split(':')[1]}`;
   if (i.isChatInputCommand?.()) {
@@ -174,6 +187,8 @@ export function responsePath(i: Interaction): string {
   return '';
 }
 export const confirmationPaths: Record<string, string> = {
+  warningPolicy: 'warnings configure',
+  ticketDelete: 'ticket delete',
   uwuClear: 'uwulock clear',
   guidedSetting: 'config set',
   configImport: 'config import',

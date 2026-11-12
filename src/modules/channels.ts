@@ -8,6 +8,8 @@ import type { App, Module, Interaction } from '../types.js';
 import { assert, duration, parseIds } from '../util.js';
 import { requirePermission, botPermission, enabled } from '../permissions.js';
 import { confirm, reply } from '../ui.js';
+import { channelNotice } from '../notices.js';
+import { channelLabel } from '../channel-label.js';
 const lockMask =
   P.SendMessages | P.SendMessagesInThreads | P.CreatePublicThreads | P.CreatePrivateThreads;
 interface SavedOverwrite {
@@ -184,18 +186,19 @@ export const channels: Module = {
         });
         app.store.put(i.guildId, 'tempText', created.id, {
           owner: i.user.id,
+          name: created.name,
           expires: Date.now() + lifetime,
         });
         app.store.job(
           i.guildId,
           i.user.id,
           'deleteChannel',
-          { channel: created.id },
+          { channel: created.id, name: created.name },
           Date.now() + lifetime,
         );
         await reply(
           i,
-          `Created <#${created.id}>. It expires <t:${Math.floor((Date.now() + lifetime) / 1000)}:R>.`,
+          `Created ${channelLabel(created.id, created.name)}. It expires <t:${Math.floor((Date.now() + lifetime) / 1000)}:R>.`,
         );
         return;
       }
@@ -212,9 +215,17 @@ export const channels: Module = {
         `Channel ${action}`,
         `<#${channel.id}> by <@${i.user.id}>.`,
       );
+      const announced = await channelNotice(
+        app,
+        i.guildId,
+        channel.id,
+        'admin',
+        `Channel ${action}`,
+        `Channel ${action} completed at <t:${Math.floor(Date.now() / 1000)}:F>. Administrators retain access under Discord permissions.`,
+      );
       await reply(
         i,
-        `Channel ${action} completed. Administrators retain access under Discord permissions.`,
+        `Channel ${action} completed.${announced ? '' : ' The channel notice could not be confirmed; check the admin log.'}`,
       );
     },
     panic: async (app, i) => {

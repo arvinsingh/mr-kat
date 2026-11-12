@@ -1,7 +1,11 @@
 import { REST, Routes } from 'discord.js';
+import { setDefaultResultOrder } from 'node:dns';
 import { commands } from './commands.js';
 import { environment } from './config.js';
 import { logError } from './util.js';
+
+setDefaultResultOrder('ipv4first');
+
 try {
   const env = environment();
   await new REST({ version: '10' })

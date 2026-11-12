@@ -14,12 +14,26 @@ import { randomUUID } from 'node:crypto';
 import type { App, Module, Interaction, Component } from '../types.js';
 import { requirePermission, botPermission, enabled, safeRole } from '../permissions.js';
 import { assert, safe, safeMentions } from '../util.js';
-import { reply, embed, noMentions } from '../ui.js';
+import { reply, embed, noMentions, confirm, type Confirmation } from '../ui.js';
+import { directMessage } from '../dm.js';
+import { ticketCard, ticketStateCard } from '../ticket-ui.js';
+import {
+  evidenceText,
+  resolveEvidence,
+  evidenceChannelAccess,
+  type MessageEvidence,
+} from '../evidence.js';
 import { destination, send } from '../discord.js';
 import { channelNotice } from '../notices.js';
+import { revokeWarning } from '../warnings.js';
+import { channelLabel } from '../channel-label.js';
 export interface Ticket {
   owner: string;
   subject: string;
+  description?: string;
+  controlMessage?: string;
+  controlError?: string;
+  closureDM?: string;
   status: 'open' | 'closed';
   created: number;
   closedAt?: number;
@@ -28,6 +42,7 @@ export interface Ticket {
   reason?: string;
 }
 const opening = new Set<string>();
+const reviewing = new Set<string>();
 function staff(app: App, i: Interaction): boolean {
   return (
     i.user.id === i.guild!.ownerId ||
@@ -36,7 +51,7 @@ function staff(app: App, i: Interaction): boolean {
         app.store.config(i.guildId!).staffRoles.some((r) => i.member!.roles.cache.has(r))))
   );
 }
-export async function openTicket(app: App, i: Interaction, subject: string) {
+export async function openTicket(app: App, i: Interaction, subject: string, description?: string) {
   enabled(app, i.guildId!, 'tickets');
   const key = `${i.guildId}:${i.user.id}`;
   assert(!opening.has(key), 'Your ticket is being created.');
@@ -91,30 +106,105 @@ export async function openTicket(app: App, i: Interaction, subject: string) {
     app.store.put(i.guildId!, 'ticket', channel.id, {
       owner: i.user.id,
       subject,
+      ...(description ? { description } : {}),
       status: 'open',
       created: Date.now(),
     } satisfies Ticket);
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId('ticket:claim')
-        .setLabel('Claim (staff)')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId('ticket:close')
-        .setLabel('Close')
-        .setStyle(ButtonStyle.Secondary),
+    const ticket = app.store.get<Ticket>(i.guildId!, 'ticket', channel.id)!;
+    const controls = await updateTicketCard(app, i.guildId!, channel, ticket);
+    await reply(
+      i,
+      `Your private ticket is ready: ${channelLabel(channel.id, channel.name)}.${controls ? '' : ' The controls could not be confirmed; use /ticket commands inside it.'}`,
     );
-    await channel.send({
-      content: `<@${i.user.id}>`,
-      embeds: [embed('Support ticket', safe(subject), 'ticket')],
-      components: [row],
-      allowedMentions: noMentions,
-    });
-    await reply(i, `Your private ticket is ready: <#${channel.id}>.`);
   } finally {
     opening.delete(key);
   }
 }
+async function updateTicketCard(app: App, guild: string, channel: TextChannel, ticket: Ticket) {
+  try {
+    let updated = false;
+    if (ticket.controlMessage) {
+      const message = await channel.messages
+        .fetch(ticket.controlMessage)
+        .catch((error: { code?: number }) => {
+          if (error.code === 10008) return null;
+          throw error;
+        });
+      if (message?.author.id === app.client.user!.id) {
+        await message.edit({ ...ticketStateCard(ticket), content: null, embeds: [] });
+        updated = true;
+      }
+    }
+    if (!updated) {
+      const message = await channel.send(ticketStateCard(ticket));
+      if (message?.id) ticket.controlMessage = message.id;
+    }
+    delete ticket.controlError;
+    app.store.put(guild, 'ticket', channel.id, ticket);
+    return true;
+  } catch {
+    ticket.controlError =
+      'Control message delivery could not be confirmed. Use /ticket commands; check channel access before trying again.';
+    app.store.put(guild, 'ticket', channel.id, ticket);
+    await app
+      .audit(
+        guild,
+        'reports',
+        'Ticket controls unavailable',
+        `<#${channel.id}> · Status: ${ticket.status}. ${ticket.controlError}`,
+      )
+      .catch(() => undefined);
+    return false;
+  }
+}
+
+export async function deleteTicketChannel(app: App, i: Interaction, pending: Confirmation) {
+  const lockKey = i.guildId + ':' + String(pending.payload.channel);
+  assert(!ticketBusy.has(lockKey), 'This ticket is being updated. Please try again shortly.');
+  ticketBusy.add(lockKey);
+  try {
+    const channel = await i.guild!.channels.fetch(String(pending.payload.channel));
+    assert(channel?.type === ChannelType.GuildText, 'Ticket channel no longer exists.');
+    await requirePermission(app, i, [P.ManageMessages, P.ManageChannels], channel);
+    await botPermission(i.guild!, P.ManageChannels, channel);
+    const ticket = app.store.get<Ticket>(i.guildId!, 'ticket', channel.id);
+    assert(
+      ticket &&
+        ticket.status === 'closed' &&
+        ticket.created === pending.payload.created &&
+        ticket.closedAt === pending.payload.closedAt,
+      'The ticket changed since confirmation; deletion cancelled.',
+    );
+    await reply(i, 'Deletion approved. Deleting this closed ticket channel now.');
+    await channel.delete('Closed support ticket deletion');
+    app.store.delete(i.guildId!, 'ticket', channel.id);
+    await app.audit(
+      i.guildId!,
+      'reports',
+      'Ticket channel deleted',
+      'Channel ID: ' + channel.id + ' · Staff: <@' + i.user.id + '>',
+    );
+  } finally {
+    ticketBusy.delete(lockKey);
+  }
+}
+
+function componentText(items: unknown[]): string {
+  return items
+    .map((item) => {
+      const raw = item as { toJSON?: () => unknown; content?: string; components?: unknown[] };
+      const data = (raw.toJSON ? raw.toJSON() : raw) as {
+        content?: string;
+        components?: unknown[];
+      };
+      return [data.content ?? '', ...(data.components ? [componentText(data.components)] : [])]
+        .filter(Boolean)
+        .join('\n');
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
 export async function ticketTranscript(channel: TextChannel): Promise<Buffer> {
   let cursor: string | undefined;
   const lines: { id: string; text: string }[] = [];
@@ -126,7 +216,7 @@ export async function ticketTranscript(channel: TextChannel): Promise<Buffer> {
     });
     if (!messages.size) break;
     for (const message of messages.values()) {
-      const text = `${message.createdAt.toISOString()} ${message.author.tag} (${message.author.id})\n${message.content}\n${message.embeds.map((e) => `${e.title ?? ''}\n${e.description ?? ''}`).join('\n')}\n${message.attachments.map((a) => `Attachment metadata: ${a.name} (${a.size} bytes); ${a.url}`).join('\n')}\n`;
+      const text = `${message.createdAt.toISOString()} ${message.author.tag} (${message.author.id})\n${message.content}\n${message.embeds.map((e) => `${e.title ?? ''}\n${e.description ?? ''}`).join('\n')}\n${componentText(message.components ?? [])}\n${message.attachments.map((a) => `Attachment metadata: ${a.name} (${a.size} bytes); ${a.url}`).join('\n')}\n`;
       bytes += Buffer.byteLength(text);
       assert(
         bytes < 4_000_000,
@@ -163,6 +253,7 @@ async function performTicketControl(app: App, i: Interaction, action: string, re
   assert(isStaff || ticket.owner === i.user.id, 'You do not have access to manage this ticket.');
   if (action === 'transcript') {
     assert(isStaff, 'Only staff can export transcripts.');
+    await botPermission(i.guild!, [P.ReadMessageHistory, P.AttachFiles], channel);
     const content = await ticketTranscript(channel);
     await reply(i, {
       files: [new AttachmentBuilder(content, { name: `ticket-${channel.id}.txt` })],
@@ -186,6 +277,7 @@ async function performTicketControl(app: App, i: Interaction, action: string, re
     ticket.claimed = i.user.id;
     ticket.claimedAt = Date.now();
     app.store.put(i.guildId!, 'ticket', channel.id, ticket);
+    if (ticket.controlMessage) await updateTicketCard(app, i.guildId!, channel, ticket);
     const announced = await channelNotice(
       app,
       i.guildId!,
@@ -206,32 +298,86 @@ async function performTicketControl(app: App, i: Interaction, action: string, re
     );
     return;
   }
+  if (action === 'delete') {
+    assert(isStaff, 'Only staff can delete ticket channels.');
+    await requirePermission(app, i, P.ManageChannels, channel);
+    assert(ticket.status === 'closed', 'Close the ticket before deleting its channel.');
+    await confirm(
+      app,
+      i,
+      'Permanently delete this closed ticket channel? Export any transcript you need first.',
+      'ticketDelete',
+      {
+        channel: channel.id,
+        created: ticket.created,
+        closedAt: ticket.closedAt,
+      },
+    );
+    return;
+  }
   if (action === 'close') {
     assert(ticket.status === 'open', 'This ticket is already closed.');
     await botPermission(i.guild!, [P.ManageChannels, P.ManageRoles], channel);
-    // Closing retains the private channel for staff review. Transcript exports remain staff-only.
-    ticket.status = 'closed';
-    ticket.closedAt = Date.now();
-    ticket.reason = reason ?? 'Closed using ticket controls';
-    app.store.put(i.guildId!, 'ticket', channel.id, ticket);
+    let transcript: Buffer | undefined;
+    try {
+      transcript = await ticketTranscript(channel);
+    } catch {
+      /* Close safely even if export failed. */
+    }
     await channel.permissionOverwrites.edit(ticket.owner, {
       ViewChannel: false,
       SendMessages: false,
     });
-    await channel.send({
-      embeds: [
-        embed(
-          'Ticket closed',
-          `By <@${i.user.id}>. ${safe(ticket.reason)}\nUse /ticket transcript to export or /ticket reopen to resume.`,
-          'warning',
-        ),
-      ],
-      allowedMentions: noMentions,
-    });
-  }
-  if (action === 'reopen') {
+    ticket.status = 'closed';
+    ticket.closedAt = Date.now();
+    ticket.reason = reason ?? 'Closed using ticket controls';
+    app.store.put(i.guildId!, 'ticket', channel.id, ticket);
+    const header =
+      'Ticket status: CLOSED\nRequest: ' +
+      ticket.subject +
+      (ticket.description ? '\n' + ticket.description : '') +
+      '\nClosing reason: ' +
+      ticket.reason +
+      '\n\n';
+    ticket.closureDM = await directMessage(
+      app,
+      ticket.owner,
+      i.guild!.name + ' · support ticket closed',
+      '**Status: Closed**\n**Your request:** ' +
+        safe(ticket.subject, 1900) +
+        (ticket.description ? '\n' + safe(ticket.description, 1000) : '') +
+        '\n**Closing reason:** ' +
+        safe(ticket.reason, 500) +
+        '\nYou no longer have access to the ticket channel. Contact server support if you need further help. Replies to this DM are not monitored.' +
+        (transcript
+          ? '\nYour conversation transcript is attached.'
+          : '\nA transcript could not be generated; contact staff for an export.'),
+      'ticket',
+      [],
+      transcript
+        ? [
+            new AttachmentBuilder(Buffer.concat([Buffer.from(header), transcript]), {
+              name: 'ticket-' + channel.id + '.txt',
+            }),
+          ]
+        : [],
+    );
+    app.store.put(i.guildId!, 'ticket', channel.id, ticket);
+    await app.audit(
+      i.guildId!,
+      'reports',
+      'Ticket closure delivery',
+      '<#' +
+        channel.id +
+        '> · DM: ' +
+        ticket.closureDM +
+        ' · Transcript: ' +
+        (transcript ? 'captured' : 'failed'),
+    );
+  } else if (action === 'reopen') {
     assert(isStaff, 'Only staff can reopen closed tickets.');
     assert(ticket.status === 'closed', 'This ticket is already open.');
+    await botPermission(i.guild!, [P.ManageChannels, P.ManageRoles], channel);
     assert(
       !app.store
         .entries<Ticket>(i.guildId!, 'ticket')
@@ -246,23 +392,29 @@ async function performTicketControl(app: App, i: Interaction, action: string, re
     ticket.status = 'open';
     delete ticket.closedAt;
     delete ticket.reason;
-  }
+    delete ticket.closureDM;
+  } else throw new Error('Unknown ticket action.');
   app.store.put(i.guildId!, 'ticket', channel.id, ticket);
+  const controls = await updateTicketCard(app, i.guildId!, channel, ticket);
   await app.audit(i.guildId!, 'reports', `Ticket ${action}`, `<#${channel.id}> · <@${i.user.id}>`);
-  await reply(i, `Ticket ${action} completed.`);
+  await reply(
+    i,
+    `Ticket ${action} completed.${action === 'close' ? ` Member DM: ${ticket.closureDM}.` : ''}${controls ? '' : ' Control message update could not be confirmed; use /ticket commands.'}`,
+  );
 }
 export async function submitReport(
   app: App,
   i: Interaction,
   target: string,
   reason: string,
-  message?: { id: string; channel: string; content: string; url: string },
+  message?: MessageEvidence,
 ) {
   enabled(app, i.guildId!, 'tickets');
   const cfg = app.store.config(i.guildId!);
   assert(cfg.logs.reports, 'Staff need to configure the reports log destination first.');
   const key = randomUUID();
   const evidence = message && !cfg.excludedChannels.includes(message.channel) ? message : undefined;
+  if (evidence?.capturedAt) await evidenceChannelAccess(app, i, evidence.channel);
   app.store.put(i.guildId!, 'reports', key, {
     actor: i.user.id,
     target,
@@ -274,7 +426,7 @@ export async function submitReport(
     i.guildId!,
     'reports',
     `Member report ${key}`,
-    `Reporter: <@${i.user.id}>\nTarget: <@${target}>\n${safeMentions(reason)}${evidence ? `\nMessage: ${evidence.url}\n${safeMentions(evidence.content)}` : ''}`,
+    `Reporter: <@${i.user.id}>\nTarget: <@${target}>\n${safeMentions(reason)}${evidence ? `\n${evidenceText(evidence)}` : ''}`,
   );
   await reply(i, `Your report was submitted privately. Reference: ${key}.`);
 }
@@ -300,23 +452,16 @@ export const tickets: Module = {
       if (action === 'panel') {
         await requirePermission(app, i, P.ManageMessages);
         const channel = await destination(app, i, i.options.getChannel('channel', true).id);
-        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder()
-            .setCustomId('ticket:open')
-            .setLabel('Open a ticket')
-            .setStyle(ButtonStyle.Primary),
+        await channel.send(
+          ticketCard(
+            safe(i.options.getString('title') ?? 'How can we help?', 180),
+            (
+              i.options.getString('description') ??
+              'Need help, have a concern, or want to contact the team? Open a private ticket below.\n\n**What happens next**\nFill in a subject and describe your request. A private channel will be created for you and authorized staff. You can add details and relevant message links there.\n\nPlease explain what happened and what help you need. Never share passwords or bot tokens. Staff respond when available; repeated role pings will not speed up a reply.\n\nWhen your ticket closes, access is removed and the bot attempts to DM you a closed-status summary and transcript. Allow server DMs to receive it. Only staff can reopen or delete closed tickets.'
+            ).slice(0, 3500),
+            [{ action: 'open', label: 'Open a support ticket' }],
+          ),
         );
-        await channel.send({
-          embeds: [
-            embed(
-              i.options.getString('title') ?? 'Contact staff',
-              i.options.getString('description') ?? 'Open a private support ticket.',
-              'ticket',
-            ),
-          ],
-          components: [row],
-          allowedMentions: noMentions,
-        });
         await reply(i, 'Support panel published.');
         return;
       }
@@ -332,6 +477,7 @@ export const tickets: Module = {
         i,
         i.options.getUser('member', true).id,
         i.options.getString('reason', true),
+        await resolveEvidence(app, i, i.options.getString('evidence')),
       ),
     appeal: async (app, i) => {
       enabled(app, i.guildId, 'moderation');
@@ -398,20 +544,41 @@ export const tickets: Module = {
       const key = i.options.getString('id', true),
         item = app.store.get<Review>(i.guildId, kind, key);
       assert(item, 'Submission not found.');
-      item.status = i.options.getString('decision', true);
-      item.decision = i.options.getString('reason', true);
-      item.reviewer = i.user.id;
-      app.store.put(i.guildId, kind, key, item);
-      await app.audit(
-        i.guildId,
-        'reports',
-        `${kind} ${key}: ${item.status}`,
-        `Reviewed by <@${i.user.id}>. ${safeMentions(item.decision)}`,
-      );
-      await reply(
-        i,
-        'Decision recorded. Accepting an appeal records the decision; use /mod to explicitly change any punishment.',
-      );
+      assert(item.status === 'open', 'This submission has already been resolved.');
+      const reviewKey = `${i.guildId}:${kind}:${key}`;
+      assert(!reviewing.has(reviewKey), 'This submission is already being reviewed.');
+      reviewing.add(reviewKey);
+      try {
+        item.status = i.options.getString('decision', true);
+        item.decision = i.options.getString('reason', true);
+        item.reviewer = i.user.id;
+        let revoked = false;
+        if (
+          kind === 'appeals' &&
+          item.status === 'accepted' &&
+          item.caseId &&
+          app.store.case(i.guildId, item.caseId)?.action === 'warn'
+        ) {
+          if (!app.store.get(i.guildId, 'warningRevocation', String(item.caseId)))
+            await revokeWarning(app, i, item.caseId, item.decision, key);
+          revoked = true;
+        }
+        app.store.put(i.guildId, kind, key, item);
+        await app.audit(
+          i.guildId,
+          'reports',
+          `${kind} ${key}: ${item.status}`,
+          `Reviewed by <@${i.user.id}>. ${safeMentions(item.decision)}`,
+        );
+        await reply(
+          i,
+          revoked
+            ? 'Appeal accepted. The warning is revoked and no longer counts toward escalation. Previous kicks/timeouts are not automatically reversed.'
+            : 'Decision recorded. For non-warning cases, use /mod to explicitly change any punishment.',
+        );
+      } finally {
+        reviewing.delete(reviewKey);
+      }
     },
     verify: async (app, i) => {
       enabled(app, i.guildId, 'onboarding');
@@ -505,6 +672,14 @@ export const tickets: Module = {
               new TextInputBuilder()
                 .setCustomId('subject')
                 .setLabel('How can staff help?')
+                .setStyle(TextInputStyle.Short)
+                .setMaxLength(120)
+                .setRequired(true),
+            ),
+            new ActionRowBuilder<TextInputBuilder>().addComponents(
+              new TextInputBuilder()
+                .setCustomId('description')
+                .setLabel('Describe your request')
                 .setStyle(TextInputStyle.Paragraph)
                 .setMaxLength(1900)
                 .setRequired(true),
@@ -512,13 +687,21 @@ export const tickets: Module = {
           );
         await i.showModal(modal);
       } else {
-        assert(['claim', 'close'].includes(action), 'Unknown ticket control.');
+        assert(
+          ['claim', 'close', 'reopen', 'delete', 'transcript'].includes(action),
+          'Unknown ticket control.',
+        );
         await ticketControl(app, i, action);
       }
       return true;
     }
     if (i.isModalSubmit() && i.customId === 'ticket:subject') {
-      await openTicket(app, i, i.fields.getTextInputValue('subject'));
+      await openTicket(
+        app,
+        i,
+        i.fields.getTextInputValue('subject'),
+        i.fields.getTextInputValue('description'),
+      );
       return true;
     }
     if (i.isModalSubmit() && i.customId.startsWith('report:')) {

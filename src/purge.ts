@@ -5,7 +5,16 @@ import { assert, errorText, safe, safeMentions } from './util.js';
 import { textChannel } from './discord.js';
 import { botPermission } from './permissions.js';
 import { messageLogExcludedChannel } from './message-logs.js';
+import { channelLabel } from './channel-label.js';
 
+interface PurgeEvidence {
+  job: string;
+  text: string;
+  state: string;
+  order: number;
+  username?: string;
+  content?: string;
+}
 export interface PurgeDeletion {
   job: string;
   actor: string;
@@ -35,13 +44,17 @@ export async function runPurge(
   results.uncertain ??= 0;
   let outcome = 'completed',
     failure = '';
+  let sourceParent: string | null = typeof p.sourceParent === 'string' ? p.sourceParent : null;
   const save = () => {
     p.index = index;
     p.results = results;
     app.store.updateJob(job.id, p);
   };
   const mark = (keys: string[], state: PurgeDeletion['state']) => {
-    for (const id of keys)
+    for (const id of keys) {
+      const key = job.id + ':' + id;
+      const evidence = app.store.get<PurgeEvidence>(job.guild, 'purgeEvidence', key);
+      if (evidence) app.store.put(job.guild, 'purgeEvidence', key, { ...evidence, state });
       app.store.put(job.guild, 'purgeDeletion', id, {
         job: job.id,
         actor: job.actor,
@@ -49,6 +62,7 @@ export async function runPurge(
         state,
         expires: Date.now() + 86400000,
       } satisfies PurgeDeletion);
+    }
   };
   const failed = (key: string, error: unknown, count = 1, uncertain = false) => {
     if (uncertain) results.uncertain += count;
@@ -58,6 +72,9 @@ export async function runPurge(
   try {
     assert(app.store.config(job.guild).modules.messages, 'The messages module is disabled.');
     const channel = await textChannel(app, job.guild, String(p.channel));
+    sourceParent = channel.parentId;
+    p.sourceParent = sourceParent;
+    if ('name' in channel) p.channelName = channel.name;
     const authority = async () => {
       await checkAuthority(channel);
       await botPermission(channel.guild, P.ReadMessageHistory, channel);
@@ -92,6 +109,67 @@ export async function runPurge(
         save();
         return true;
       }
+      const cfg = app.store.config(job.guild);
+      const recordable =
+        cfg.modules.logging &&
+        !messageLogExcludedChannel(cfg, String(p.channel)) &&
+        !(channel.parentId && cfg.excludedChannels.includes(channel.parentId));
+      if (recordable)
+        app.store.transaction(() => {
+          for (const { id, message } of messages) {
+            if (app.store.get(job.guild, 'logMessage', id)) continue;
+            const author = message.author;
+            const attachments = [...(message.attachments?.values() ?? [])]
+              .map((a) => 'Attachment: ' + (a.name ?? a.id) + ' · ' + a.url)
+              .join('\n');
+            const embeds = (message.embeds ?? [])
+              .map((e) =>
+                [
+                  e.title,
+                  e.description,
+                  ...(e.fields ?? []).map((field) => field.name + ': ' + field.value),
+                ]
+                  .filter(Boolean)
+                  .join('\n'),
+              )
+              .join('\n');
+            const text =
+              'Message ID: ' +
+              id +
+              ' · Author: ' +
+              (author
+                ? (author.tag || author.username) +
+                  ' · <@' +
+                  author.id +
+                  '> (ID: ' +
+                  author.id +
+                  ')'
+                : 'unavailable') +
+              '\nCreated: ' +
+              (message.createdTimestamp
+                ? new Date(message.createdTimestamp).toISOString()
+                : 'unknown') +
+              '\nContent: ' +
+              (message.content ??
+                app.store.message(id)?.content ??
+                '[Unavailable before deletion]') +
+              (attachments ? '\n' + attachments : '') +
+              (embeds ? '\nEmbed text:\n' + embeds : '');
+            app.store.put(job.guild, 'purgeEvidence', job.id + ':' + id, {
+              job: job.id,
+              text,
+              state: 'pending',
+              order: ids.indexOf(id),
+              username: author?.username ?? author?.tag ?? 'Unknown author',
+              content:
+                (message.content ??
+                  app.store.message(id)?.content ??
+                  '[Unavailable before deletion]') +
+                (attachments ? '\n' + attachments : '') +
+                (embeds ? '\n' + embeds : ''),
+            } satisfies PurgeEvidence);
+          }
+        });
       // Persist intent before the API call. Restart recovery treats this batch as uncertain.
       p.inFlight = { keys, end, skipped };
       mark(keys, 'pending');
@@ -119,36 +197,6 @@ export async function runPurge(
       index = end;
       delete p.inFlight;
       save();
-      const cfg = app.store.config(job.guild);
-      if (
-        cfg.modules.logging &&
-        !messageLogExcludedChannel(cfg, String(p.channel)) &&
-        !(channel.parentId && cfg.excludedChannels.includes(channel.parentId))
-      ) {
-        const eligible = messages.filter(({ id }) => !app.store.get(job.guild, 'logMessage', id));
-        if (eligible.length) {
-          const details = eligible
-            .map(({ id, message }) => {
-              const author = message.author;
-              const attachments = message.attachments
-                ? [...message.attachments.values()]
-                    .map(
-                      (file) =>
-                        `Attachment: ${safeMentions(file.name ?? file.id)}${file.url ? ` · ${file.url}` : ''}`,
-                    )
-                    .join('\n')
-                : '';
-              return `Message ID: ${id} · Author: ${author ? `${safe(author.tag || author.username, 100)} · <@${author.id}> (ID: ${author.id})${author.bot ? ' · bot' : ''}` : 'unavailable'}\nContent: ${safeMentions(message.content ?? '[Unavailable]') || '[No text]'}${attachments ? '\n' + attachments : ''}`;
-            })
-            .join('\n\n');
-          await app.audit(
-            job.guild,
-            'messages',
-            `Purge batch · ${state === 'confirmed' ? 'messages deleted' : state === 'uncertain' ? 'outcome uncertain' : 'request rejected'}`,
-            `Job: ${job.id}\nRequested by: <@${job.actor}>\nChannel: <#${p.channel}>\nTime: <t:${Math.floor(Date.now() / 1000)}:F>\nReason: ${safeMentions(String(p.reason ?? 'No reason supplied.'))}\n${keys.length} deletion request(s): ${state}. ${state === 'confirmed' ? 'Discord acknowledged deletion.' : 'The text below was captured before the request; it is not proof of deletion.'}\n\n${details}`,
-          );
-        }
-      }
       return true;
     };
     while (index < ids.length) {
@@ -210,12 +258,83 @@ export async function runPurge(
     if (app.store.cancelled(job.id)) outcome = 'cancelled';
     p.outcome = outcome;
     save();
-    await app.audit(
+    const cfg = app.store.config(job.guild);
+    const label = channelLabel(
+      String(p.channel),
+      typeof p.channelName === 'string' ? p.channelName : undefined,
+    );
+    const moderationLog = await app.audit(
       job.guild,
       'moderation',
-      `Purge ${outcome}`,
-      `Job: ${job.id}\nRequested by: <@${job.actor}>\nChannel: <#${p.channel}>\nReason: ${safeMentions(String(p.reason ?? 'No reason supplied.'))}\nSelected: ${ids.length}; processed: ${index}; remaining: ${Math.max(0, ids.length - index)}.\nDeletion acknowledged: ${results.deleted}; skipped: ${results.skipped}; rejected/failed: ${results.failed}; uncertain: ${results.uncertain}.${failure ? `\nStopped: ${safeMentions(failure)}` : ''}\nUncertain batches are not automatically retried. Use /jobs show id:${job.id} for details.`,
+      `Message purge · ${outcome}`,
+      `Job: ${job.id}\nRequested by: <@${job.actor}>\nChannel: ${label}\nReason: ${safeMentions(String(p.reason ?? 'No reason supplied.'))}\nSelected: ${ids.length}; processed: ${index}; remaining: ${Math.max(0, ids.length - index)}.\nDeletion acknowledged: ${results.deleted}; skipped: ${results.skipped}; rejected/failed: ${results.failed}; uncertain: ${results.uncertain}.${failure ? `\nStopped: ${safeMentions(failure)}` : ''}\nUncertain batches are not automatically retried. Use /jobs show id:${job.id} for details.`,
       { force: true },
     );
+    const evidence = ids
+      .map((id) => app.store.get<PurgeEvidence>(job.guild, 'purgeEvidence', job.id + ':' + id))
+      .filter((item): item is PurgeEvidence => !!item)
+      .sort((a, b) => a.order - b.order);
+    if (
+      evidence.length &&
+      cfg.modules.logging &&
+      !messageLogExcludedChannel(cfg, String(p.channel)) &&
+      !(sourceParent && cfg.excludedChannels.includes(sourceParent))
+    ) {
+      const sections = ['confirmed', 'failed', 'uncertain', 'pending']
+        .map((state) => {
+          const items = evidence.filter((item) => item.state === state);
+          if (!items.length) return '';
+          const heading =
+            state === 'confirmed'
+              ? 'Purged messages'
+              : state === 'failed'
+                ? 'Deletion failed — not confirmed purged'
+                : 'Deletion outcome unknown — not confirmed purged';
+          return (
+            '**' +
+            heading +
+            '**\n' +
+            items
+              .map((item) =>
+                item.username !== undefined
+                  ? '**' +
+                    safe(item.username, 100) +
+                    ':** ' +
+                    safeMentions(item.content || '[No text]')
+                  : safeMentions(item.text),
+              )
+              .join('\n\n')
+          );
+        })
+        .filter(Boolean)
+        .join('\n\n');
+      await app.audit(
+        job.guild,
+        'messages',
+        'Message purge · ' + outcome,
+        'Job: ' +
+          job.id +
+          '\nRequested by: <@' +
+          job.actor +
+          '>\nChannel: ' +
+          label +
+          '\nModeration log: ' +
+          (moderationLog
+            ? `[View purge record](${moderationLog})`
+            : 'Delivery unavailable; see /jobs show for the retained outcome.') +
+          '\nReason: ' +
+          safeMentions(String(p.reason ?? 'No reason supplied.')) +
+          '\nDeletion acknowledged: ' +
+          results.deleted +
+          '; skipped: ' +
+          results.skipped +
+          '; rejected/failed: ' +
+          results.failed +
+          '; uncertain: ' +
+          results.uncertain +
+          '.\n\n' +
+          sections,
+      );
+    }
   }
 }

@@ -1,10 +1,10 @@
 # Command guide
 
-Successful voice-room controls, channel lock/unlock/slowmode/archive changes, tags and sticky settings produce normal persistent channel messages. They cannot be dismissed like private interaction notices. Panels, announcements, suggestions, polls, and configured logs also remain normal messages in their designated channels.
+Successful voice-room controls, channel lock/unlock/slowmode/archive changes, tags and sticky settings produce **normal persistent channel messages**. They cannot be dismissed like private interaction notices. Panels, announcements, suggestions, polls, and configured logs also remain normal messages in their designated channels.
 
-Sensitive administrative changes keep a private acknowledgement and a lasting staff receipt: use `/changes` (Manage Server + staff allowlist), or read the configured admin log. Receipts survive dismissed acknowledgements, follow `retentionDays`, and are copied to the configured private admin log even when general event logging is disabled. `/changes` retains the fallback record if a log destination is absent/unavailable. They omit command arguments, file contents, DM bodies and anonymous-submission identities. Confirmation previews/cancellations do not create receipts.
+Sensitive administrative changes keep a private acknowledgement and a **lasting staff receipt**: use `/changes` (Manage Server + staff allowlist), or read the configured admin log. Receipts survive dismissed acknowledgements, follow `retentionDays`, and are copied to the configured private admin log even when general event logging is disabled. `/changes` retains the fallback record if a log destination is absent/unavailable. They omit command arguments, file contents, DM bodies and anonymous-submission identities. Confirmation previews/cancellations do not create receipts.
 
-Help, read-only queries, confession forms/submission acknowledgements, reports, personal preferences and sensitive exports remain private. Reports/tickets, polls and public posts retain their existing destination records. Errors are private. Each `/man` entry states its RESPONSE behavior. Staff authorization is checked at execution time, including for buttons and scheduled jobs.
+Help, read-only queries, confession forms/submission acknowledgements, reports, personal preferences and sensitive exports remain private. Reports/tickets, polls and public posts retain their existing destination records. Errors are private. Each `/man` entry states its **RESPONSE** behavior; all registered command paths are checked by automated tests. Staff authorization is checked at execution time, including for buttons and scheduled jobs.
 
 Confirm/Cancel prompts disappear after an accepted selection. A fresh private outcome message remains, with no stale confirmation controls. Expired prompts cannot execute an action; run the command again.
 
@@ -19,7 +19,7 @@ Confirm/Cancel prompts disappear after an accepted selection. A fresh private ou
 - `/help` lists member commands; `/help audience:moderators` or `owners` lists the corresponding commands.
 - `/help command:voice` or `/man command:voice setup` opens a detailed manual. Include a subcommand for its exact options and example. Use Previous/Next or the optional `page` field to navigate.
 - `/help guide:members` downloads a guide you can copy into a Discord channel. Choose `moderators` or `owners` for staff versions.
-- Run `npm run docs` to generate the complete manual and Discord-ready member, moderator, and owner guides locally. The generated files are not included in version control; `/help` and `/man` provide the same information inside Discord.
+- The [complete manual](MANUAL.md) includes every registered command and subcommand. The [member](DISCORD-MEMBERS.md), [moderator](DISCORD-MODERATORS.md), and [owner](DISCORD-OWNERS.md) guides are split into message-sized blocks for posting.
 
 Reading help does not grant access to restricted commands. Commands marked owner require the actual server owner; staff commands also require their native Discord permission and the configured staff-role allowlist.
 
@@ -33,7 +33,7 @@ All members can use **`/text`**, **reply commands**, or **Apps → Transform tex
 - `/text clap text:Please read the rules`
 - `/text leetspeak text:Hello`
 - `/text morse text:hello` or `/text morse text:.... . .-.. .-.. --- decode:true`
-- `/text reverse text:Hello`
+- `/text reverse text:Hello 👋`
 - `/text zalgo text:Hello intensity:low` or `/text unzalgo text:PASTE_GLITCHED_TEXT`
 
 **Transform someone else’s message:** right-click/long-press → Reply → send `!uwu`, `!emojify`, `!faces`, `!clap`, `!leet`, `!morse`, `!reverse`, `!zalgo` or `!unzalgo`. Optional arguments: `!emojify 60`, `!faces 30`, `!zalgo high`, `!morse decode`. Alternatively, Apps → Transform text opens a private effect picker. You can also supply `message:MESSAGE_LINK` instead of `text:` to any `/text` effect. Message links must point to this same server and channel. Both member and bot need Read Message History for existing messages, plus posting permissions. Missing/deleted messages and messages containing only attachments/embeds are rejected. Menus expire after five minutes and are bound to their opener. Selected controls are removed before delivery.
@@ -88,7 +88,7 @@ Attachments are forwarded with filenames, spoiler markers and descriptions, up t
 
 Locks work in ordinary text/announcement channels and active public threads with those parents. Global locks cover eligible public threads automatically; channel-only parent locks do not cover their threads. Introductions and welcome/leave chat channels are eligible; the bot’s own posts are ignored. Private threads, forum posts, voice chat, support tickets, confessions/review channels, logs, starboard, heartbeat, rules and active self-role selection destinations are excluded. An unused roles-channel setting with native role selection does not block chat. Channel-only panel/add errors identify the specific protected destination, exclusion or allowlist restriction; global locks skip those destinations. Pinned messages, thread starters, polls, stickers, forwards, attachment-only posts, bots/webhooks and `!`-prefixed commands are skipped. Existing messages and later edits of untouched originals are not converted. Messages sent while offline stay unchanged.
 
-Owner configuration: `/config set key:uwuLock value:{"enabled":true,"channels":["CHANNEL_ID"]}`, then confirm, further restricts eligible destinations. An empty channel list allows all otherwise eligible destinations; a member lock is still required. Disable with `{"enabled":false}`. The community module must be enabled. Changing permissions, staff roles, protected roles or exclusions stops ineligible locks from acting. Ownership/edit records follow `retentionDays` and are included in backups; after they expire, only normal staff deletion remains available. Statistics count confirmed conversions, not attempted sends.
+Owner configuration: `/config set key:uwuLock value:{"enabled":true,"channels":["CHANNEL_ID"]}`, then confirm, further restricts eligible destinations. An empty channel list still requires individual channel/member locks. Disable with `{"enabled":false}`. The community module must be enabled. Changing permissions, staff roles, protected roles or exclusions stops ineligible locks from acting. Ownership/edit records follow `retentionDays` and are included in backups; after they expire, only normal staff deletion remains available. Statistics count confirmed conversions, not attempted sends.
 
 See `/help command:uwulock` for the full manual.
 
@@ -127,8 +127,10 @@ Replace example IDs with your actual numeric IDs. Give the bot **Manage Channels
 /ticket panel channel:#support title:Contact staff description:Open a private ticket for help.
 ```
 
-4. Test **Open a ticket** with an ordinary member. The button opens a private subject form. Submitting creates a channel in the configured category: @everyone is denied access, and the member, bot, server owner and configured staff roles are allowed. Discord administrators can still access private channels. An empty `staffRoles` list does not give ordinary staff roles access to tickets.
-5. Staff use **Claim** or `/ticket claim`, chat in the private channel, then `/ticket close reason:Resolved`. The creator can close their own ticket too. Closure hides the channel from its creator; staff retain access, can `/ticket transcript` or `/ticket reopen`. Closed channels follow `retentionDays`. One open ticket per member, 50 per server; there is no creation cooldown.
+4. Test **Open a support ticket** with an ordinary member. The integrated Discord Components V2 card keeps its text and button together. The button opens a private subject-and-description form. Submitting creates a channel in the configured category: @everyone is denied access, and the member, bot, server owner and configured staff roles are allowed. Discord administrators can still access private channels. An empty `staffRoles` list does not give ordinary staff roles access to tickets. Republish the panel after upgrading to replace an older panel's appearance.
+5. Staff use **Claim** or `/ticket claim`, chat in the private channel, then `/ticket close reason:Resolved`. The creator can close their own ticket too. Closure hides the channel from its creator and changes the ticket card to **Reopen (staff)**, **Transcript (staff)** and **Delete channel (staff)**. Only staff can reopen. Deletion requires Manage Messages, Manage Channels and confirmation; reopened/changed tickets invalidate old deletion prompts. Closed channels follow `retentionDays`. One open ticket per member, 50 per server; there is no creation cooldown.
+
+On closure the bot attempts one DM containing **Status: Closed**, the original support request, the closing reason and a text transcript of up to the latest 1,000 accessible messages (4 MB limit). Attachment links are references and may expire. A blocked DM, failed export or unavailable control card does not undo closure: staff receive a delivery result and can still use slash commands. The member needs server DMs enabled. Staff transcript exports remain private. The closure DM does not identify who closed the ticket.
 
 Claiming now posts a **normal, lasting message inside the private ticket** showing **Claimed by @Staff** and the claim time. The ticket creator and other staff can see who is handling it. Other staff retain access and may help, but cannot overwrite another person's claim; the error identifies the current claimant. Repeated claims by the same person do not duplicate the notice. Reopening keeps the assignment. If notice delivery fails, the assignment remains saved and the bot reports the delivery problem.
 
@@ -144,11 +146,74 @@ Reports are separate: `/config log kind:reports channel:#staff-reports` selects 
 
 Setup/disable require the owner; status requires Manage Server and the staff allowlist. Use a normal text channel where the bot can view/send messages and embed links. The interval is 1–1,440 minutes, default 5. Each normal status post shows time, uptime and gateway latency. The first follows shortly after setup; missed intervals are not replayed after restart. Failed/uncertain delivery waits until the next interval; status/host logs show the issue. Disable keeps existing posts. An offline bot cannot send an offline alert. This uses the existing bot process and no paid service.
 
-`/panic on` and `/panic off` post lasting notices in **each affected channel**. Successful warnings, timeouts, timeout removals, kicks, bans, unbans and nickname changes post member/staff/time/reason/case in the **original command channel**, including when a second staff member approves elsewhere. Use a staff channel if the reason is sensitive. Warning/timeout/removal actions attempt one-way DMs; blocked DMs do not cancel enforcement. Private notes and exports stay private.
+`/panic on` and `/panic off` post lasting notices in **each affected channel**. Successful warnings, timeouts, timeout removals, kicks, bans, unbans and nickname changes post member/time/reason/case in the **original command channel**, including when a second staff member approves elsewhere. Public notices and moderation DMs do **not** name the requesting or approving moderator. Channel lock/unlock/archive/slowmode notices also omit the actor and use private acknowledgements. Private cases, staff logs and Discord's native audit log retain accountability. Use a staff channel if the reason is sensitive. Warning/timeout/removal actions attempt one-way DMs; blocked DMs do not cancel enforcement. Private notes and exports stay private.
+
+## Warnings, revocation and escalation
+
+```text
+/warnings panel
+/warnings panel member:@Member
+/warnings list
+/warnings list member:@Member
+/warnings revoke case:12 reason:Appeal accepted after reviewing context
+/warnings status
+/warnings configure threshold:3 action:kick
+/warnings configure threshold:3 action:timeout timeout_minutes:10
+/warnings configure threshold:0 action:none
+```
+
+**Guided panel:** `/warnings panel` opens a private dashboard; `/warnings list` opens the same controls. Staff can use the **member picker**, browse history with **Previous / Next / Refresh**, then select a warning to read its full reason. Select **Revoke warning** to open a private reason form. Submitting revokes the warning and refreshes the panel; the member receives a notice. Ordinary members see only their own history and cannot pick other members or revoke warnings. Long details have separate **Previous detail / Next detail** buttons.
+
+**Owner policy controls:** choose **Warning policy**, select **Automatic action** and **Active warning threshold**, and use **Timeout duration** for the number of minutes. These are drafts: nothing changes until **Review changes → Confirm**. The review appears separately so the main panel stays available; Cancel keeps the saved policy. **Reload saved policy** discards unsaved choices. The panel shows saved settings, bot permission checks and second-staff approval status. A newer saved policy invalidates an older preview instead of being overwritten.
+
+Panels expire after ten minutes; forms expire after five. Every action rechecks permissions and panel ownership. A revoke form is rejected if the selected member/warning changed, and a completed form cannot be reused. Command alternatives below remain available.
+
+Members can inspect their own warning history. Moderate Members and the staff allowlist are required to inspect others, revoke warnings or check the policy. History has **Previous**, **Next** and **Refresh** controls and separates active, expired, revoked and total retained counts. `/mod info` also shows warning totals. Records already removed by `retentionDays` cannot be counted.
+
+Only the server owner can configure escalation, with confirmation. At the threshold, a **new warning** can automatically trigger the selected timeout or kick; changing the policy does not punish existing members retroactively. Threshold `0` or action `none` disables escalation. Existing `warningThreshold` settings keep their timeout behavior unless `warningAction` is changed. Bot permissions, role hierarchy and protected roles apply. A warning issuer needs Moderate Members; the owner-authorized automatic kick requires Kick Members on the bot. If `secondApproval` is enabled, a different staff member with Kick Members must approve the automatic kick. Active warnings and current policy are checked again before enforcement. Failed or uncertain actions preserve the warning and are not automatically retried.
+
+Revocation preserves the original case but stops that warning counting toward escalation. Accepting its `/appeal` through `/review resolve kind:appeals ... decision:accepted` also revokes it. A warning expiring or being revoked invalidates an outstanding kick approval based on that warning set. Revocation DMs/public notices omit staff identity; private logs retain it. Revocation does not automatically undo an earlier timeout or let a kicked member rejoin. A kicked member cannot run server slash commands until they rejoin; provide an outside-server contact route for those appeals.
+
+## Message evidence
+
+For warnings, kicks and bans, select the source message's **Apps → Moderate with evidence** action. A private action picker and reason form open; kicks/bans still require confirmation and any configured second approval. No public reply command is needed, so the moderator's identity is not disclosed by a typed shortcut.
+
+Alternatively, copy the message link and supply it as `evidence`:
+
+```text
+/mod warn member:@Member reason:Repeated harassment evidence:MESSAGE_LINK
+/mod kick member:@Member reason:Repeated rule violations evidence:MESSAGE_LINK
+/mod ban member:@Member reason:Spam evidence:MESSAGE_LINK
+/mod evidence case:123
+/report member:@Member reason:Please review this evidence:MESSAGE_LINK
+```
+
+A message ID also works for a message in the command's current channel. The actor and bot need View Channel and Read Message History in the same server; excluded channels and excluded parents cannot be captured. The bot saves the message text, author, timestamps and attachment references before it disappears. It does not download evidence files or require screenshots. Case evidence can be exported privately with `/mod evidence`; it follows `retentionDays` and is included in database backups. Report evidence remains in the private report workflow. Existing attachment URLs may expire. Slash commands cannot automatically discover a replied-to message; use the message menu or link option.
+
+## Plain channel messages
+
+Use `/say channel:#general message:Your message` to post lasting plain text as the bot. Omit `message` to open a multiline Markdown composer (2,000 characters). Manage Messages, the staff allowlist and destination posting access apply. The post has no staff attribution or public interaction acknowledgement; staff logs record the actor and destination without copying the body. User/channel references render normally, but mention notifications are suppressed. Unknown delivery outcomes are reported without automatically sending again.
+
+## Protected-role mention redirects
+
+As owner, enable a polite support redirect and repeated-role-ping alerts:
+
+```text
+/mentionguard setup roles:MOD_ROLE_ID,LEAD_ROLE_ID support_channel:#support limit:3 seconds:30
+/mentionguard setup roles:MOD_ROLE_ID channel:#general support_channel:#support
+/mentionguard status
+/mentionguard disable
+```
+
+Copy actual role IDs using Developer Mode. **Omit `channel` for server-wide monitoring** across otherwise eligible accessible channels. Supply it to restrict monitoring to that channel and its threads. `support_channel` independently selects the redirect destination; omitting it preserves an existing support destination, or falls back to `/ticket open`. Existing saved setups remain server-wide. The AutoMod module must be enabled. Members mentioning a protected role get a randomized plain-text reply pointing to support; if they cannot see that channel, the bot suggests `/ticket open`. Repeated mentions of other roles also trigger a private staff alert: by default three role-mention messages within 30 seconds across channels, or three distinct roles in one message. Automatic replies are limited to one per sender per 15 seconds to avoid flooding. Administrators and configured `roleMentions.exemptRoles` are exempt. Owners can edit the response list and exemptions through configuration export/import.
+
+**The guard keeps the original message and does not cancel delivered notifications.** To prevent ordinary members from pinging staff, turn off **Allow anyone to @mention this role** on those roles and restrict **Mention @everyone, @here, and All Roles**. Native `/automod mentions` can block excess mentions before publication; it is separate from this redirect. Other existing AutoMod policies may still act according to their own settings.
 
 “Lasting” means a normal Discord message that cannot be dismissed as an ephemeral interaction. Staff can still delete it; configured logs and retained receipts still follow retention. Settings changes keep their staff-only admin-log receipt even with event logging off. No bot command imposes a waiting-period cooldown; duplicate/concurrency checks, capacity limits, AutoMod spam detection, explicit channel slowmode settings and Discord API rate limits remain.
 
 ## Bulk message cleanup
+
+Temporary text-channel creation replies and voice-room creation notices retain both the clickable channel tag and its plain-text name in parentheses. The name remains readable after Discord shows the deleted channel as unknown. Existing historical posts are unchanged.
 
 `/purge count:100 scan:300` previews matching IDs and requires confirmation. Recent messages are deleted in batches of up to 100; a singleton uses an individual delete. Messages near/over two weeks old are skipped by default. Only `older:true` authorizes deleting those individually, because Discord forbids bulk deletion for them. Pins, current staff/bot permissions, module state and cancellation are rechecked while executing. `/jobs show` reports deleted/skipped/failed counts; `/jobs cancel` stops remaining work. Failed bulk requests are recorded without individual fallback, because an uncertain request may already have succeeded. Deletion cannot be undone. See [Discord's bulk deletion endpoint](https://docs.discord.com/developers/resources/message#bulk-delete-messages).
 
@@ -160,7 +225,11 @@ Edit/deletion logs include the message ID, channel, and author details when avai
 
 When an uncached message has a new edit timestamp but no earlier text, the edit log labels the original text unavailable. If a message was neither cached nor stored before deletion, Discord only provides its IDs: the bot preserves those IDs and labels missing author/content unavailable. A deleted message cannot be fetched afterwards, and the original-message reference may no longer open. The author is not necessarily the person who deleted it.
 
-Logs preserve **all available text** across numbered messages instead of cutting off long content. Bulk deletion includes every eligible member message’s ID, author and available body, including those beyond the first ten. Native role mentions are clickable and notification pings are suppressed. Deleted roles can no longer resolve, so names/IDs remain as reference. Deleting only bot/log messages produces no message audit entry. Administrative channel logs are emitted only for setting changes, not message-activity metadata.
+Logs preserve **all available text** across numbered messages instead of cutting off long content. Bot purges now capture fresh message content **before each deletion request** and emit **Message purge** log messages containing the requester, source channel (plus its plain name), a link to the moderation purge record, and **username: message text** entries. Complete available text is split across numbered bot messages on overflow; no downloadable text transcript is sent. Failed/uncertain attempts are separated from confirmed deletions. Internal records retain message IDs, timestamps and attachment references. This includes all batches, cancellations and interrupted operations; skipped messages are not described as deleted. A separate private moderation summary records counts and accountability. Log/excluded channels and their excluded parents are respected.
+
+Discord cannot recover content after an external deletion if the bot never saw or retained it. Optional snapshots help with ordinary external deletions; purge transcripts do not require enabling snapshots. Native role mentions in logs are clickable and notification pings are suppressed. Deleted roles can no longer resolve, so names/IDs remain as reference. Deleting only bot/log messages produces no message audit entry. Administrative channel logs are emitted only for setting changes, not message-activity metadata.
+
+Member logs distinguish server-avatar and global-avatar changes from actual role changes. They include the current avatar through its Discord CDN URL; the bot does not download images or keep an additional avatar-history cache. An incomplete old member event is not treated as evidence that all roles changed.
 
 ## Commands
 
@@ -326,7 +395,7 @@ Tags are clickable references, while notification pings remain disabled in the o
 
 ### Easter egg
 
-Anyone can use `/easteregg` in a channel where they and the bot can post. It publishes the server's surprise text, with the footer **Mr. Kat · Curiosity rewarded**. There is no command cooldown and mentions do not ping. The community module must be enabled.
+Anyone can use `/easteregg` in a channel where they and the bot can post. It publishes the server's surprise text, with the fixed footer **Mr. Kat · Curiosity rewarded**. There is no command cooldown and mentions do not ping. The community module must be enabled.
 
 The server owner can edit the text without changing code:
 
@@ -334,7 +403,7 @@ The server owner can edit the text without changing code:
 /config set key:easterEggText value:"Your interesting message goes here."
 ```
 
-Confirm the configuration change. The creator credit stays fixed when the text changes.
+Confirm the configuration change. The Mr. Kat footer stays unchanged when the text changes.
 
 ### Message colors
 
@@ -364,46 +433,50 @@ The last person leaving a managed room triggers deletion of that room and its bu
 
 ### Command reference
 
-| Command                              | Actions                                                                                                        | Access                                                                                                |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `/help`, `/man`                      | Private command index, detailed manuals, page navigation, downloadable guides                                  | Members; reading help does not grant execution permissions                                            |
-| `/confess`                           | Private confession form; reviewed or immediate publication                                                     | Members, after owner setup                                                                            |
-| `/confess-notifications`             | Enable/mute reply DMs for a root confession                                                                    | Published contributors and native thread members                                                      |
-| `/dm`                                | send, template, templates, from-template                                                                       | Manage Server + allowlist; sending requires confirmation                                              |
-| `/onboarding`                        | setup, message, autoroles, preview, status                                                                     | Server owner                                                                                          |
-| `/heartbeat`                         | setup, status, disable                                                                                         | Setup/disable: owner; status: Manage Server + staff allowlist                                         |
-| `/starboard`                         | setup, status, refresh, disable                                                                                | Setup/disable: owner; status/refresh: Manage Messages + allowlist                                     |
-| `/easteregg`                         | Public custom surprise with creator credit                                                                     | Members; text configuration: server owner                                                             |
-| `/text`                              | Nine text effects, reply shortcuts and Apps → Transform text                                                   | Members who can post; existing messages also require Read Message History                             |
-| `/confession`                        | setup, mode, status, list, review, thread, close, reopen, remove                                               | Manage Messages + allowlist; setup/mode: server owner; no author lookup                               |
-| `/setup`                             | Interactive guided setup and owner channel/role pickers; direct private-log shortcut                           | Owner                                                                                                 |
-| `/config`                            | show, set, log, module, export, import                                                                         | Owner                                                                                                 |
-| `/status`                            | Connection latency, uptime, enabled modules                                                                    | Members                                                                                               |
-| `/diagnose`                          | Interactive per-feature health checks and setup guidance                                                       | Manage Server + allowlist                                                                             |
-| `/backup`                            | Backup health, verified creation, local file checks and offline recovery guide                                 | Owner                                                                                                 |
-| `/mod`                               | warn, timeout, untimeout, kick, ban, unban, info, cases, note, amend, export, summary, nickname, bulk-nickname | Action-specific native permission + allowlist                                                         |
-| `/purge`                             | Filtered, confirmed deletion of selected messages                                                              | Manage Messages in target channel + allowlist                                                         |
-| `/role`                              | add, remove, temporary, menu, bulk                                                                             | Manage Roles + hierarchy + allowlist                                                                  |
-| `/voice`                             | status, setup, rename, limit, lock, unlock, permit, block, transfer, claim, panel, move                        | Status: members; room controls: owner; setup: server owner; move: Move Members + hierarchy            |
-| `/automod`                           | status, show, panel, configure, mode, keyword, mentions, list, toggle                                          | Manage Server + allowlist; panel/configure/mode: owner                                                |
-| `/verify`                            | panel, approve, deny, pending                                                                                  | Manage Server + allowlist                                                                             |
-| `/ticket`                            | panel, open, claim, close, reopen, transcript                                                                  | Open: members; close: ticket owner/staff; other management: staff                                     |
-| `/report`                            | Submit private member report                                                                                   | Members; no command cooldown                                                                          |
-| Message menu → Apps → Report message | Report a message with available evidence                                                                       | Members; no command cooldown                                                                          |
-| `/appeal`                            | Appeal own retained moderation case                                                                            | Members with server access                                                                            |
-| `/review`                            | List or resolve reports/appeals                                                                                | Moderate Members + allowlist                                                                          |
-| `/announce`                          | send, schedule, edit, builder, everyone                                                                        | Manage Messages + destination access + allowlist; everyone also needs Mention Everyone                |
-| `/tag`                               | set, get, list, delete                                                                                         | Get/list: members; management: Manage Messages + allowlist                                            |
-| `/sticky`                            | set, remove                                                                                                    | Manage Messages in channel + allowlist                                                                |
-| `/poll`                              | create, close, results; buttons record votes                                                                   | Create: members who can post; close: creator or authorized staff; results/voting: members with access |
-| `/suggest`                           | create, status                                                                                                 | Create: members; status: Manage Messages + allowlist                                                  |
-| `/remind`                            | Personal DM reminder                                                                                           | Members; maximum 20 pending                                                                           |
-| `/event`                             | Scheduled channel reminder                                                                                     | Manage Messages + destination access + allowlist                                                      |
-| `/channel`                           | temporary, lock, unlock, slowmode, archive, unarchive, inspect, snapshot                                       | Manage Channels + allowlist                                                                           |
-| `/panic`                             | on, off with confirmation                                                                                      | Manage Server and Manage Channels in selected channels + allowlist                                    |
-| `/stats`                             | Aggregate server metrics                                                                                       | Moderate Members + allowlist                                                                          |
-| `/activity`                          | Previously observed members past a chosen activity cutoff                                                      | Moderate Members + allowlist                                                                          |
-| `/jobs`                              | list, show, cancel                                                                                             | Own jobs; Manage Server staff can inspect all                                                         |
+| Command                                      | Actions                                                                                                                  | Access                                                                                                |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `/help`, `/man`                              | Private command index, detailed manuals, page navigation, downloadable guides                                            | Members; reading help does not grant execution permissions                                            |
+| `/confess`                                   | Private confession form; reviewed or immediate publication                                                               | Members, after owner setup                                                                            |
+| `/confess-notifications`                     | Enable/mute reply DMs for a root confession                                                                              | Published contributors and native thread members                                                      |
+| `/say`                                       | Plain bot-authored channel post or multiline composer                                                                    | Manage Messages + destination access + staff allowlist                                                |
+| `/mentionguard`                              | setup, status, disable; non-deleting support redirects and repeated-ping alerts                                          | Setup/disable: owner; status: Manage Server + allowlist                                               |
+| Message menu → Apps → Moderate with evidence | Private Warn/Kick/Ban picker using the selected message                                                                  | Action-specific moderation permission + staff allowlist                                               |
+| `/dm`                                        | send, template, templates, from-template                                                                                 | Manage Server + allowlist; sending requires confirmation                                              |
+| `/onboarding`                                | setup, message, autoroles, preview, status                                                                               | Server owner                                                                                          |
+| `/heartbeat`                                 | setup, status, disable                                                                                                   | Setup/disable: owner; status: Manage Server + staff allowlist                                         |
+| `/starboard`                                 | setup, status, refresh, disable                                                                                          | Setup/disable: owner; status/refresh: Manage Messages + allowlist                                     |
+| `/easteregg`                                 | Public custom surprise with creator credit                                                                               | Members; text configuration: server owner                                                             |
+| `/text`                                      | Nine text effects, reply shortcuts and Apps → Transform text                                                             | Members who can post; existing messages also require Read Message History                             |
+| `/confession`                                | setup, mode, status, list, review, thread, close, reopen, remove                                                         | Manage Messages + allowlist; setup/mode: server owner; no author lookup                               |
+| `/setup`                                     | Interactive guided setup and owner channel/role pickers; direct private-log shortcut                                     | Owner                                                                                                 |
+| `/config`                                    | show, set, log, module, export, import                                                                                   | Owner                                                                                                 |
+| `/status`                                    | Connection latency, uptime, enabled modules                                                                              | Members                                                                                               |
+| `/diagnose`                                  | Interactive per-feature health checks and setup guidance                                                                 | Manage Server + allowlist                                                                             |
+| `/backup`                                    | Backup health, verified creation, local file checks and offline recovery guide                                           | Owner                                                                                                 |
+| `/mod`                                       | warn, timeout, untimeout, kick, ban, unban, info, cases, note, amend, export, evidence, summary, nickname, bulk-nickname | Action-specific native permission + allowlist                                                         |
+| `/warnings`                                  | list, status, revoke, configure; counts and paginated history                                                            | Members: own list; staff: other histories/revoke/status; configuration: owner                         |
+| `/purge`                                     | Filtered, confirmed deletion of selected messages                                                                        | Manage Messages in target channel + allowlist                                                         |
+| `/role`                                      | add, remove, temporary, menu, bulk                                                                                       | Manage Roles + hierarchy + allowlist                                                                  |
+| `/voice`                                     | status, setup, rename, limit, lock, unlock, permit, block, transfer, claim, panel, move                                  | Status: members; room controls: owner; setup: server owner; move: Move Members + hierarchy            |
+| `/automod`                                   | status, show, panel, configure, mode, keyword, mentions, list, toggle                                                    | Manage Server + allowlist; panel/configure/mode: owner                                                |
+| `/verify`                                    | panel, approve, deny, pending                                                                                            | Manage Server + allowlist                                                                             |
+| `/ticket`                                    | panel, open, claim, close, reopen, transcript, delete                                                                    | Open: members; close: ticket owner/staff; other management: staff                                     |
+| `/report`                                    | Submit private member report                                                                                             | Members; no command cooldown                                                                          |
+| Message menu → Apps → Report message         | Report a message with available evidence                                                                                 | Members; no command cooldown                                                                          |
+| `/appeal`                                    | Appeal own retained moderation case                                                                                      | Members with server access                                                                            |
+| `/review`                                    | List or resolve reports/appeals                                                                                          | Moderate Members + allowlist                                                                          |
+| `/announce`                                  | send, schedule, edit, builder, everyone                                                                                  | Manage Messages + destination access + allowlist; everyone also needs Mention Everyone                |
+| `/tag`                                       | set, get, list, delete                                                                                                   | Get/list: members; management: Manage Messages + allowlist                                            |
+| `/sticky`                                    | set, remove                                                                                                              | Manage Messages in channel + allowlist                                                                |
+| `/poll`                                      | create, close, results; buttons record votes                                                                             | Create: members who can post; close: creator or authorized staff; results/voting: members with access |
+| `/suggest`                                   | create, status                                                                                                           | Create: members; status: Manage Messages + allowlist                                                  |
+| `/remind`                                    | Personal DM reminder                                                                                                     | Members; maximum 20 pending                                                                           |
+| `/event`                                     | Scheduled channel reminder                                                                                               | Manage Messages + destination access + allowlist                                                      |
+| `/channel`                                   | temporary, lock, unlock, slowmode, archive, unarchive, inspect, snapshot                                                 | Manage Channels + allowlist                                                                           |
+| `/panic`                                     | on, off with confirmation                                                                                                | Manage Server and Manage Channels in selected channels + allowlist                                    |
+| `/stats`                                     | Aggregate server metrics                                                                                                 | Moderate Members + allowlist                                                                          |
+| `/activity`                                  | Previously observed members past a chosen activity cutoff                                                                | Moderate Members + allowlist                                                                          |
+| `/jobs`                                      | list, show, cancel                                                                                                       | Own jobs; Manage Server staff can inspect all                                                         |
 
 ## Examples
 
@@ -437,10 +510,10 @@ Durations use a positive integer with `s`, `m`, `h`, `d`, or `w`, with a minimum
 
 The role menu treats its selection as the desired set of roles for that panel. Unselected roles from that panel are removed. Exclusive groups and prerequisite rules are checked before changes. Publishing a new panel is recommended after changing its role allowlist.
 
-Ticket closure hides the retained channel from its creator; staff can reopen it. Transcripts are staff-only. A member with closed tickets can create a new ticket immediately. One open ticket per member and the 50-open-ticket server cap remain.
+Ticket closure hides the retained channel from its creator; only staff can reopen it. The creator receives a closure DM with their request and transcript when delivery succeeds; manual transcript exports are staff-only. A member with closed tickets can create a new ticket immediately. One open ticket per member and the 50-open-ticket server cap remain.
 
 Enabling `secondApproval` requires a different authorized staff member to approve kicks/bans within ten minutes in the moderation log channel. Both staff members' current authority is rechecked. The original confirmation and final approval do not bypass hierarchy.
 
-Resolving or accepting an appeal only records the decision. Staff explicitly run the appropriate moderation command to change a punishment.
+Accepting an appeal for a warning revokes that warning and removes it from active escalation counts while retaining its original case. For other case types staff explicitly change punishment; previous timeouts/kicks are not automatically undone.
 
 Scheduled jobs recheck relevant permissions, and safety cleanup (for example temporary-role expiry) may continue after a feature is disabled. Keep required bot permissions until pending cleanup finishes.
