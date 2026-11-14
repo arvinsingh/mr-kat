@@ -1,3 +1,5 @@
+import { suggestions } from './suggestions.js';
+import { modernEdit, sendModern } from '../presentation.js';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits as P } from 'discord.js';
 import { randomUUID } from 'node:crypto';
 import type { App, Module } from '../types.js';
@@ -16,14 +18,7 @@ export interface Poll {
   closed: boolean;
   anonymous: boolean;
 }
-export interface Suggestion {
-  actor: string;
-  text: string;
-  state: string;
-  reason?: string;
-  channel: string;
-  message: string;
-}
+export type { Suggestion } from './suggestions.js';
 export function pollResults(poll: Poll): string {
   const counts = poll.choices.map(
     (_, index) => Object.values(poll.votes).filter((value) => value === index).length,
@@ -31,6 +26,20 @@ export function pollResults(poll: Poll): string {
   return `${safe(poll.question, 800)}\n\n${poll.choices.map((choice, index) => `${index + 1}. ${safe(choice, 150)} — **${counts[index]}**`).join('\n')}\n\n${poll.closed || poll.expires <= Date.now() ? 'Closed' : `Closes <t:${Math.floor(poll.expires / 1000)}:R>`}\n${poll.anonymous ? 'Voter names are hidden from members. IDs are stored internally to enforce one vote per member.' : 'Votes are recorded by member ID.'}`;
 }
 const pollRefresh = new Map<string, Promise<void>>();
+function pollControls(key: string, poll: Poll) {
+  return poll.closed || poll.expires <= Date.now()
+    ? []
+    : [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          poll.choices.map((choice, index) =>
+            new ButtonBuilder()
+              .setCustomId(`vote:${key}:${index}`)
+              .setLabel(`${index + 1}. ${choice}`.slice(0, 80))
+              .setStyle(ButtonStyle.Primary),
+          ),
+        ),
+      ];
+}
 export async function updatePoll(app: App, guild: string, key: string) {
   const identity = `${guild}:${key}`;
   const previous = pollRefresh.get(identity) ?? Promise.resolve();
@@ -48,11 +57,13 @@ async function renderPoll(app: App, guild: string, key: string) {
   const channel = await app.client.channels.fetch(poll.channel);
   if (!channel?.isTextBased() || !channel.isSendable()) return;
   const message = await channel.messages.fetch(poll.message);
-  await message.edit({
-    embeds: [embed(`Poll ${key}`, pollResults(poll), 'poll')],
-    ...(poll.closed ? { components: [] } : {}),
-    allowedMentions: noMentions,
-  });
+  await message.edit(
+    modernEdit({
+      embeds: [embed(`Poll ${key}`, pollResults(poll), 'poll')],
+      components: pollControls(key, poll),
+      allowedMentions: noMentions,
+    }),
+  );
 }
 export const community: Module = {
   commands: {
@@ -98,7 +109,7 @@ export const community: Module = {
               .setStyle(ButtonStyle.Primary),
           ),
         );
-        const message = await channel.send({
+        const message = await sendModern(channel, {
           embeds: [embed(`Poll ${key}`, pollResults(poll), 'poll')],
           components: [row],
           allowedMentions: noMentions,
@@ -126,54 +137,7 @@ export const community: Module = {
       }
       await reply(i, { embeds: [embed(`Poll ${key}`, pollResults(poll), 'poll')] });
     },
-    suggest: async (app, i) => {
-      enabled(app, i.guildId, 'community');
-      const action = i.options.getSubcommand();
-      if (action === 'create') {
-        const channel = await destination(app, i, i.channelId);
-        const key = randomUUID().slice(0, 8),
-          text = i.options.getString('text', true);
-        const message = await channel.send({
-          embeds: [
-            embed(`Suggestion ${key} · open`, `${safe(text)}\nBy <@${i.user.id}>`, 'suggestion'),
-          ],
-          allowedMentions: noMentions,
-        });
-        app.store.put(i.guildId, 'suggestion', key, {
-          actor: i.user.id,
-          text,
-          state: 'open',
-          channel: channel.id,
-          message: message.id,
-        } satisfies Suggestion);
-        await reply(i, `Suggestion submitted: ${key}.`);
-        return;
-      }
-      await requirePermission(app, i, P.ManageMessages);
-      const key = i.options.getString('id', true);
-      const suggestion = app.store.get<Suggestion>(i.guildId, 'suggestion', key);
-      assert(suggestion, 'Suggestion not found.');
-      suggestion.state = i.options.getString('state', true);
-      suggestion.reason = i.options.getString('reason', true);
-      app.store.put(i.guildId, 'suggestion', key, suggestion);
-      const channel = await destination(app, i, suggestion.channel);
-      const message = await channel.messages.fetch(suggestion.message);
-      await message.edit({
-        embeds: [
-          embed(
-            `Suggestion ${key} · ${suggestion.state}`,
-            `${safe(suggestion.text)}\n\nDecision: ${safe(suggestion.reason)}`,
-            suggestion.state === 'declined'
-              ? 'error'
-              : ['accepted', 'implemented'].includes(suggestion.state)
-                ? 'success'
-                : 'suggestion',
-          ),
-        ],
-        allowedMentions: noMentions,
-      });
-      await reply(i, 'Suggestion decision saved.');
-    },
+    suggest: suggestions.commands!.suggest!,
     remind: async (app, i) => {
       enabled(app, i.guildId, 'community');
       assert(

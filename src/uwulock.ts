@@ -1,3 +1,4 @@
+import { modernMessage } from './presentation.js';
 import {
   AttachmentBuilder,
   ChannelType,
@@ -393,14 +394,17 @@ export async function uwuMessage(app: App, message: Message): Promise<boolean> {
       return false;
     }
     receipt('sending');
-    const sent = await hook.send({
-      ...body,
-      username: message.member?.displayName ?? message.author.username,
-      avatarURL: message.author.displayAvatarURL(),
-      allowedMentions: noMentions,
-      flags: MessageFlags.SuppressEmbeds,
-      ...(message.channel.isThread() ? { threadId: message.channelId } : {}),
-    });
+    const sent = await hook.send(
+      modernMessage({
+        ...body,
+        username: message.member?.displayName ?? message.author.username,
+        avatarURL: message.author.displayAvatarURL(),
+        allowedMentions: noMentions,
+        flags: MessageFlags.SuppressEmbeds,
+        withComponents: true,
+        ...(message.channel.isThread() ? { threadId: message.channelId } : {}),
+      }),
+    );
     const post: UwuPost = {
       author: message.author.id,
       channel: message.channelId,

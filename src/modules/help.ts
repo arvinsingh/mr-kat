@@ -1,4 +1,10 @@
-import { ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import {
+  ActionRowBuilder,
+  AttachmentBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder,
+} from 'discord.js';
 import type { App, Interaction, Module } from '../types.js';
 import { findTopic, manualText, indexText, splitPages, type Audience } from '../manual.js';
 import { guideMarkdown } from '../guides.js';
@@ -27,8 +33,60 @@ async function show(i: Interaction, path: string, group: Audience | 'all', page:
       .setDisabled(page === pages.length),
   );
   await reply(i, {
-    content: `${pages[page - 1]}\n\nPage ${page}/${pages.length} · ${topic ? `/man command:${topic.path}` : `/help audience:${group}`}`,
-    components: [row],
+    content: `## ${topic ? `Command manual · /${topic.path}` : 'Explore the bot'}\n${pages[page - 1]}\n\n-# Page ${page}/${pages.length} · ${topic ? `/man command:${topic.path}` : `/help audience:${group}`}`,
+    components: [
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`help:${i.user.id}:audience`)
+          .setPlaceholder('Choose a guide')
+          .addOptions(
+            ['members', 'moderators', 'owners', 'all'].map((value) => ({
+              label:
+                value === 'all'
+                  ? 'All features'
+                  : `${value[0]!.toUpperCase()}${value.slice(1)} guide`,
+              value,
+              default: group === value,
+            })),
+          ),
+      ),
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`help:${i.user.id}:topic:${group}`)
+          .setPlaceholder('Explore a feature')
+          .addOptions(
+            [
+              'help',
+              'ticket',
+              'confess',
+              'warnings',
+              'voice',
+              'role',
+              'poll',
+              'suggest',
+              'text',
+              'announce',
+              'say',
+              'report',
+              'appeal',
+              'onboarding',
+              'starboard',
+              'automod',
+              'mentionguard',
+              'mod',
+              'backup',
+              'diagnose',
+              'config',
+              'heartbeat',
+              'uwulock',
+              'remind',
+            ]
+              .filter((value) => findTopic(value))
+              .map((value) => ({ label: `/${value}`, value })),
+          ),
+      ),
+      row,
+    ],
   });
 }
 async function command(app: App, i: Parameters<NonNullable<Module['commands']>[string]>[1]) {
@@ -58,6 +116,21 @@ async function command(app: App, i: Parameters<NonNullable<Module['commands']>[s
 export const help: Module = {
   commands: { help: command, man: command },
   component: async (_app, i) => {
+    if (i.isStringSelectMenu?.() && i.customId.startsWith('help:')) {
+      const [, actor, action, audience] = i.customId.split(':');
+      assert(
+        actor === i.user.id,
+        'These help controls belong to another member. Run /help yourself.',
+      );
+      const group = action === 'audience' ? i.values[0] : audience;
+      assert(
+        group && ['members', 'moderators', 'owners', 'all'].includes(group),
+        'Invalid help audience.',
+      );
+      assert(action === 'audience' || action === 'topic', 'Unknown help control.');
+      await show(i, action === 'topic' ? i.values[0]! : '', group as Audience | 'all', 1);
+      return true;
+    }
     if (!i.isButton() || !i.customId.startsWith('help:')) return false;
     const [, actor, group, page, topic] = i.customId.split(':');
     assert(

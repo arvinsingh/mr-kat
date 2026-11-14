@@ -1,3 +1,4 @@
+import { modernMessage } from './presentation.js';
 import { randomInt } from 'node:crypto';
 import { PermissionFlagsBits as P, type Message } from 'discord.js';
 import type { App } from './types.js';
@@ -103,9 +104,11 @@ export async function roleMentionReply(app: App, message: Message): Promise<bool
       support = `Please use <#${destination.id}> to contact staff.`;
   }
   row.replyAt = now;
-  await message.reply({
-    content: `${safe(guard.responses[randomInt(guard.responses.length)]!, 250)}\n${support}`,
-    allowedMentions: { parse: [], repliedUser: false },
-  });
+  await message.reply(
+    modernMessage({
+      content: `${safe(guard.responses[randomInt(guard.responses.length)]!, 250)}\n${support}`,
+      allowedMentions: { parse: [], repliedUser: false },
+    }),
+  );
   return true;
 }

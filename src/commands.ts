@@ -239,9 +239,12 @@ export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
   ),
   root(
     'dm',
-    'Send one-way server notices to a member',
+    'Send server notices and reply in DM conversation threads',
     [
-      sub('send', 'Preview and confirm a one-way staff DM', [
+      sub('reply', 'Reply to a member from their staff conversation thread', [
+        s('message', 'Message', true),
+      ]),
+      sub('send', 'Preview and confirm a staff DM', [
         u(),
         s('message', 'Message text', true),
         s('reason', 'Staff audit reason', true),
@@ -320,7 +323,7 @@ export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
   root(
     'say',
     'Staff: send a plain bot message to a server channel',
-    [c(), s('message', 'Message text (omit to open a multiline composer)')],
+    [c('channel', false), s('message', 'Message text (omit to open a multiline composer)')],
     P.ManageMessages,
   ),
   root(
@@ -627,7 +630,7 @@ export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
   ]),
   root(
     'sticky',
-    'Staff: configure a rate-limited sticky message',
+    'Staff: configure a delayed sticky message',
     [
       sub('set', 'Set this channel sticky', [s('text', 'Message', true)]),
       sub('remove', 'Remove this channel sticky'),
@@ -647,13 +650,31 @@ export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
     sub('results', 'Show poll results', [s('id', 'Poll ID', true)]),
   ]),
   root('suggest', 'Submit and review suggestions', [
+    sub('setup', 'Owner: choose the suggestions channel', [c()]),
     sub('create', 'Submit a suggestion', [s('text', 'Suggestion', true)]),
     sub('status', 'Staff: update a suggestion', [
       s('id', 'Suggestion ID', true),
-      s('state', 'Decision', true, ['open', 'accepted', 'declined', 'implemented']),
+      s('state', 'Decision', true, [
+        'open',
+        'under_review',
+        'needs_info',
+        'accepted',
+        'in_progress',
+        'implemented',
+        'declined',
+      ]),
       s('reason', 'Decision reason', true),
     ]),
   ]),
+  root(
+    'logs',
+    'Create or inspect private bot log channels',
+    [
+      sub('setup', 'Owner: create the log category and missing channels', [c('category', false)]),
+      sub('status', 'Show configured log channels'),
+    ],
+    P.ManageGuild,
+  ),
   root('remind', 'Set a personal reminder', [
     s('in', 'Delay such as 2h', true),
     s('text', 'Reminder', true),

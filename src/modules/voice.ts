@@ -1,8 +1,16 @@
+import { sendModern, modernModal } from '../presentation.js';
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
+  ContainerBuilder,
+  SectionBuilder,
+  TextDisplayBuilder,
+  UserSelectMenuBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   PermissionFlagsBits as P,
   type VoiceState,
   type Guild,
@@ -14,7 +22,7 @@ import type { App, Module, Interaction } from '../types.js';
 import { requirePermission, botPermission, enabled, manageableMember } from '../permissions.js';
 import { assert, safe, logError, errorText } from '../util.js';
 import { embed, reply, noMentions } from '../ui.js';
-import { missingChannel, textChannel } from '../discord.js';
+import { missingChannel, textChannel, send } from '../discord.js';
 import { channelNotice } from '../notices.js';
 import { channelLabel } from '../channel-label.js';
 export interface VoiceRoom {
@@ -127,7 +135,7 @@ async function creationFailed(app: App, state: VoiceState, error: unknown) {
     app.audit(state.guild.id, 'admin', 'Voice room creation failed', description),
     ...(state.member
       ? [
-          state.member.send({
+          sendModern(state.member, {
             content: `${description}\nAsk the server owner to resolve the problem, then leave and rejoin the lobby.`,
             allowedMentions: noMentions,
           }),
@@ -188,29 +196,48 @@ export async function syncCompanion(app: App, channel: VoiceChannel, room: Voice
       ReadMessageHistory: true,
     });
 }
-function voiceControls() {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    ...['lock', 'unlock', 'claim'].map((action) =>
-      new ButtonBuilder()
-        .setCustomId(`voice:${action}`)
-        .setLabel(action)
-        .setStyle(ButtonStyle.Secondary),
+export function voiceCard(channel: Pick<VoiceChannel, 'id' | 'name'>, room: VoiceRoom) {
+  const container = new ContainerBuilder().addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      '## Your voice room\n' +
+        channelLabel(channel.id, channel.name) +
+        ' · <@' +
+        room.owner +
+        '>\nCreated: <t:' +
+        Math.floor(room.created / 1000) +
+        ':f> · Deletes when empty.',
     ),
   );
+  for (const [action, label, description] of [
+    ['rename', 'Rename', 'Change the room name'],
+    ['limit', 'Capacity', 'Set the member limit'],
+    ['lock', 'Lock', 'Stop new joins'],
+    ['unlock', 'Unlock', 'Allow new joins'],
+    ['permit', 'Permit', 'Allow a member'],
+    ['block', 'Block', 'Remove and block a member'],
+    ['transfer', 'Transfer', 'Choose a new owner'],
+    ['claim', 'Claim', 'Take over after the owner leaves'],
+  ])
+    container.addSectionComponents(
+      new SectionBuilder()
+        .addTextDisplayComponents(new TextDisplayBuilder().setContent(description!))
+        .setButtonAccessory(
+          new ButtonBuilder()
+            .setCustomId('voice:' + action + ':' + channel.id)
+            .setLabel(label!)
+            .setStyle(ButtonStyle.Secondary),
+        ),
+    );
+  container.addTextDisplayComponents(
+    new TextDisplayBuilder().setContent('-# Stay connected to use controls. /help command:voice'),
+  );
+  return { components: [container], allowedMentions: noMentions };
 }
 async function postVoiceControls(app: App, channel: VoiceChannel, room: VoiceRoom) {
   try {
     await botPermission(channel.guild, [P.SendMessages, P.EmbedLinks], channel);
-    await channel.send({
-      content: `<@${room.owner}>, your voice room is ready!`,
-      embeds: [
-        embed(
-          'Your voice room · commands and controls',
-          `Created: <t:${Math.floor(room.created / 1000)}:F>\n\nUse this built-in voice text chat; no separate text channel is needed. Stay connected to this room to use its controls.\n\n**Owner commands**\n/voice rename name:Gaming — change the name\n/voice limit count:5 — set capacity (0 = unlimited)\n/voice lock · /voice unlock — restrict or allow new joins\n/voice permit member:@Member — allow someone\n/voice block member:@Member — disconnect and block someone from the room and its chat\n/voice transfer member:@Member — give ownership to someone in the room\n\n**Other controls**\n/voice claim — take ownership after the owner leaves\n/voice panel — show your controls privately\n/help command:voice — full instructions\n\nOnly the owner can change room settings. This room and its chat are deleted when everyone leaves. Chat visibility follows the room's View Channel permission; locking joins does not make chat private.`,
-          'voice',
-        ),
-      ],
-      components: [voiceControls()],
+    await sendModern(channel, {
+      ...voiceCard(channel, room),
       allowedMentions: { parse: [], users: [room.owner], roles: [], repliedUser: false },
       nonce: channel.id,
       enforceNonce: true,
@@ -366,13 +393,16 @@ export async function voiceEvent(app: App, oldState: VoiceState, next: VoiceStat
       await next.member.voice.setChannel(created, 'Join-to-create');
       await postVoiceControls(app, created, room);
       if (cfg.voiceNoticeChannel)
-        await channelNotice(
-          app,
-          guild.id,
-          cfg.voiceNoticeChannel,
-          'voice',
-          'Temporary voice room created',
-          `Room: ${channelLabel(created.id, created.name)}\nCreated by: <@${next.id}>\nCreated: <t:${Math.floor(room.created / 1000)}:F>\nThe room's built-in text chat contains commands and controls. Its owner can use /voice rename, limit, lock, unlock, permit, block and transfer; /voice panel opens controls. Another occupant can /voice claim after the owner leaves.\nThe room and its built-in text chat are deleted when empty. This creation notice remains.`,
+        await send(app, guild.id, cfg.voiceNoticeChannel, {
+          content: `Temporary VC created by <@${room.owner}>: ${channelLabel(created.id, created.name)}\nCreated: <t:${Math.floor(room.created / 1000)}:f>.`,
+        }).catch(() =>
+          app.audit(
+            guild.id,
+            'admin',
+            'Channel notice could not be confirmed',
+            `Voice room ${channelLabel(created!.id, created!.name)} is ready; its creation notice could not be delivered.`,
+            { force: true },
+          ),
         );
     } else await removeRoom(app, created, room);
   } catch (error) {
@@ -519,12 +549,12 @@ export const voice: Module = {
         return;
       }
       if (action === 'panel') {
-        await reply(i, {
-          content:
-            'These controls act on the bot-created voice room you are currently connected to. First join the configured creation lobby; /voice status shows it. Only the room owner may lock/unlock; another occupant can claim after the owner leaves. Use /help command:voice for naming, limits, and membership.',
-          components: [voiceControls()],
-          allowedMentions: noMentions,
-        });
+        const member = await i.guild.members.fetch(i.user.id);
+        const channel = member.voice.channel;
+        assert(channel?.type === ChannelType.GuildVoice, 'Join a temporary voice room first.');
+        const room = app.store.get<VoiceRoom>(i.guildId, 'voiceRoom', channel.id);
+        assert(room, 'This is not a managed room.');
+        await reply(i, voiceCard(channel, room));
         return;
       }
       await control(
@@ -538,10 +568,71 @@ export const voice: Module = {
     },
   },
   component: async (app, i) => {
-    if (!i.isButton() || !i.customId.startsWith('voice:')) return false;
-    const action = i.customId.split(':')[1]!;
-    assert(['lock', 'unlock', 'claim'].includes(action), 'Unknown voice control.');
-    await control(app, i, action);
+    if (!i.customId.startsWith('voice:')) return false;
+    const [, action, roomId, actor] = i.customId.split(':');
+    const member = await i.guild!.members.fetch(i.user.id);
+    const channel = member.voice.channel;
+    assert(
+      channel?.type === ChannelType.GuildVoice && (!roomId || channel.id === roomId),
+      'Join this voice room first.',
+    );
+    const room = app.store.get<VoiceRoom>(i.guildId!, 'voiceRoom', channel.id);
+    assert(room, 'This room no longer exists.');
+    if (actor) assert(actor === i.user.id, 'Open your own voice control.');
+    if (i.isButton() && ['rename', 'limit'].includes(action!)) {
+      assert(room.owner === i.user.id, 'Only the room owner can use this control.');
+      await i.showModal(
+        modernModal(
+          new ModalBuilder()
+            .setCustomId('voice:' + action + ':' + channel.id + ':' + i.user.id)
+            .setTitle(action === 'rename' ? 'Rename voice room' : 'Room capacity')
+            .addComponents(
+              new ActionRowBuilder<TextInputBuilder>().addComponents(
+                new TextInputBuilder()
+                  .setCustomId('value')
+                  .setLabel(
+                    action === 'rename' ? 'Room name' : 'Member limit (0–99; 0 = unlimited)',
+                  )
+                  .setStyle(TextInputStyle.Short)
+                  .setMaxLength(action === 'rename' ? 90 : 2)
+                  .setRequired(true),
+              ),
+            ),
+        ),
+      );
+      return true;
+    }
+    if (i.isButton() && ['permit', 'block', 'transfer'].includes(action!)) {
+      assert(room.owner === i.user.id, 'Only the room owner can use this control.');
+      await reply(i, {
+        content: 'Choose a member.',
+        components: [
+          new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(
+            new UserSelectMenuBuilder()
+              .setCustomId('voice:' + action + ':' + channel.id + ':' + i.user.id)
+              .setPlaceholder('Choose a member')
+              .setMaxValues(1),
+          ),
+        ],
+      });
+      return true;
+    }
+    assert(
+      ['lock', 'unlock', 'claim', 'rename', 'limit', 'permit', 'block', 'transfer'].includes(
+        action!,
+      ),
+      'Unknown voice control.',
+    );
+    let value: string | number | undefined;
+    if (i.isModalSubmit()) {
+      value = i.fields.getTextInputValue('value');
+      if (action === 'limit') {
+        assert(/^\d{1,2}$/.test(value), 'Use a limit from 0 to 99.');
+        value = Number(value);
+      }
+    }
+    if (i.isUserSelectMenu?.()) value = i.values[0];
+    await control(app, i, action!, value);
     return true;
   },
 };

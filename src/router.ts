@@ -1,4 +1,8 @@
+import { modernMessage, modernModal, modernEdit, displayText } from './presentation.js';
 import { roleMentions } from './modules/role-mentions.js';
+import { suggestions } from './modules/suggestions.js';
+import { logs } from './modules/logs.js';
+import { dmConversations } from './dm-conversations.js';
 import { warnings, applyWarningPolicy } from './modules/warnings.js';
 import {
   MessageFlags,
@@ -41,6 +45,9 @@ import { assert, UserError, errorText, logError } from './util.js';
 import { enabled, manageableRole, requirePermission, botPermission } from './permissions.js';
 
 const features: Module[] = [
+  suggestions,
+  logs,
+  dmConversations,
   evidenceControls,
   roleMentions,
   warnings,
@@ -210,10 +217,12 @@ export async function route(app: App, raw: DiscordInteraction) {
   if (raw.isButton() && (await nativeRolesHelp(app, raw))) return;
   if (raw.guildId !== app.guildId || !raw.inCachedGuild()) {
     await raw
-      .reply({
-        content: 'This bot is configured for one server. Run commands in that server.',
-        flags: MessageFlags.Ephemeral,
-      })
+      .reply(
+        modernMessage({
+          content: 'This bot is configured for one server. Run commands in that server.',
+          flags: MessageFlags.Ephemeral,
+        }),
+      )
       .catch(() => undefined);
     return;
   }
@@ -221,10 +230,12 @@ export async function route(app: App, raw: DiscordInteraction) {
   const key = `${i.guildId}:${i.user.id}`;
   if (inFlight.has(key)) {
     await raw
-      .reply({
-        content: 'Your previous action is still running. Please try again shortly.',
-        flags: MessageFlags.Ephemeral,
-      })
+      .reply(
+        modernMessage({
+          content: 'Your previous action is still running. Please try again shortly.',
+          flags: MessageFlags.Ephemeral,
+        }),
+      )
       .catch(() => undefined);
     return;
   }
@@ -251,11 +262,14 @@ export async function route(app: App, raw: DiscordInteraction) {
       (raw.isStringSelectMenu?.() && raw.customId.startsWith('evidence:action:')) ||
       (raw.isButton() &&
         (raw.customId === 'ticket:open' ||
+          /^suggestion:(review|write):/.test(raw.customId) ||
+          raw.customId.startsWith('dm:reply:') ||
+          /^voice:(rename|limit):/.test(raw.customId) ||
           raw.customId.startsWith('confession:reply:') ||
           /^warnings:(revoke|duration):/.test(raw.customId)));
     if (!modal) {
       if (
-        (raw.isButton() && raw.customId.startsWith('help:')) ||
+        ((raw.isButton() || raw.isStringSelectMenu?.()) && raw.customId.startsWith('help:')) ||
         (raw.isStringSelectMenu?.() && raw.customId.startsWith('textEffect:')) ||
         ((raw.isButton() || raw.isAnySelectMenu?.()) &&
           /^(health|backup|uwuPanel):/.test(raw.customId)) ||
@@ -318,7 +332,7 @@ export async function route(app: App, raw: DiscordInteraction) {
         message: {
           id: target.id,
           channel: target.channelId,
-          content: target.content,
+          content: target.content || displayText(target),
           url: target.url,
           author: target.author.id,
           created: target.createdTimestamp,
@@ -340,7 +354,7 @@ export async function route(app: App, raw: DiscordInteraction) {
               .setMaxLength(1900),
           ),
         );
-      await raw.showModal(modal);
+      await raw.showModal(modernModal(modal));
       return;
     }
     if (
@@ -377,15 +391,17 @@ export async function route(app: App, raw: DiscordInteraction) {
             : 'The action failed. Check /diagnose or the host logs. Completed changes may need review before retrying.';
     if (responsePolicies[responsePath(i)] === 'public' && i.deferred) {
       await i
-        .editReply({ content: 'This command could not be completed.', components: [] })
+        .editReply(modernEdit({ content: 'This command could not be completed.', components: [] }))
         .catch(() => undefined);
       await i.deleteReply().catch(() => undefined);
       await i
-        .followUp({
-          content: message.slice(0, 1900),
-          flags: MessageFlags.Ephemeral,
-          allowedMentions: { parse: [] },
-        })
+        .followUp(
+          modernMessage({
+            content: message.slice(0, 1900),
+            flags: MessageFlags.Ephemeral,
+            allowedMentions: { parse: [] },
+          }),
+        )
         .catch((e) => logError('interaction response', e));
     } else
       await reply(i, { content: message.slice(0, 1900), components: [] }).catch((e) =>

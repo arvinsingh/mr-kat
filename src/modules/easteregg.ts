@@ -1,3 +1,4 @@
+import { sendModern } from '../presentation.js';
 import { PermissionFlagsBits as P } from 'discord.js';
 import type { Module } from '../types.js';
 import { destination } from '../discord.js';
@@ -11,7 +12,7 @@ export const easteregg: Module = {
       enabled(app, i.guildId, 'community');
       const channel = await destination(app, i, i.channelId);
       await botPermission(i.guild, P.EmbedLinks, channel);
-      await channel.send({
+      await sendModern(channel, {
         embeds: [
           embed(
             'You found an Easter egg! ✨',

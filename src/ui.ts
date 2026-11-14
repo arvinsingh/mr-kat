@@ -5,12 +5,14 @@ import {
   MessageFlags,
   EmbedBuilder,
   type InteractionReplyOptions,
+  type APIMessageTopLevelComponent,
 } from 'discord.js';
 import { randomUUID } from 'node:crypto';
 import type { App, Interaction, Component } from './types.js';
 import { assert } from './util.js';
 import type { LogKind } from './config.js';
 import { responsePath } from './response-policy.js';
+import { modernPages } from './presentation.js';
 
 export const colors = {
   info: 0x5865f2,
@@ -24,6 +26,7 @@ export const colors = {
   admin: 0x3498db,
   reports: 0xe67e22,
   automod: 0xe91e63,
+  dm: 0x7289da,
   confession: 0xeb459e,
   poll: 0x1abc9c,
   suggestion: 0xf39c12,
@@ -73,18 +76,22 @@ export async function reply(
 ): Promise<void> {
   const options: InteractionReplyOptions = typeof content === 'string' ? { content } : content;
   outcomes.set(i, typeof options.content === 'string' ? options.content : 'Completed.');
-  if (dismissedPrompts.has(i))
-    await i.followUp({ ...options, flags: MessageFlags.Ephemeral, allowedMentions: noMentions });
-  else if (i.deferred || i.replied)
-    await i.editReply({ ...options, allowedMentions: noMentions } as Parameters<
-      typeof i.editReply
-    >[0]);
-  else
-    await i.reply({
-      ...options,
-      flags: publicResponses.has(i) ? undefined : MessageFlags.Ephemeral,
-      allowedMentions: noMentions,
-    });
+  const privateReply =
+    dismissedPrompts.has(i) || (!publicResponses.has(i) && i.ephemeral !== false);
+  const pages = modernPages({ ...options, allowedMentions: noMentions });
+  for (const [index, page] of pages.entries()) {
+    const flags = Number(page.flags) | (privateReply ? MessageFlags.Ephemeral : 0);
+    if (dismissedPrompts.has(i) || index > 0)
+      await i.followUp({ ...page, flags } as Parameters<typeof i.followUp>[0]);
+    else if (i.deferred || i.replied)
+      await i.editReply({
+        ...page,
+        content: null,
+        embeds: [],
+        flags: Number(page.flags) & ~MessageFlags.Ephemeral,
+      } as Parameters<typeof i.editReply>[0]);
+    else await i.reply({ ...page, flags } as InteractionReplyOptions);
+  }
 }
 export function embed(title: string, description: string, tone: Tone = 'info'): EmbedBuilder {
   return new EmbedBuilder()
@@ -136,7 +143,7 @@ export async function confirm(
   title: string,
   kind: string,
   payload: Record<string, unknown>,
-  preview: EmbedBuilder[] = [],
+  preview: (EmbedBuilder | APIMessageTopLevelComponent)[] = [],
 ): Promise<void> {
   previews.add(i);
   const key = randomUUID();
@@ -159,8 +166,16 @@ export async function confirm(
       .setStyle(ButtonStyle.Secondary),
   );
   await reply(i, {
-    embeds: [embed('Review action', title, 'warning'), ...preview],
-    components: [row],
+    embeds: [
+      embed('Review action', title, 'warning'),
+      ...preview.filter((item): item is EmbedBuilder => item instanceof EmbedBuilder),
+    ],
+    components: [
+      ...preview.filter(
+        (item): item is APIMessageTopLevelComponent => !(item instanceof EmbedBuilder),
+      ),
+      row,
+    ],
   });
 }
 export function takeConfirmation(app: App, i: Component): Confirmation | undefined {

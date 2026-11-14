@@ -18,6 +18,9 @@ const groups: Record<ResponsePolicy, string[]> = {
     'sticky remove',
   ],
   staff: [
+    'logs setup',
+    'suggest setup',
+    'dm reply',
     'warnings configure',
     'warnings revoke',
     'channel lock',
@@ -112,6 +115,7 @@ const groups: Record<ResponsePolicy, string[]> = {
     'announce everyone',
   ],
   private: [
+    'logs status',
     'warnings panel',
     'warnings list',
     'warnings status',
@@ -171,6 +175,10 @@ export const responsePolicies = Object.fromEntries(
   Object.entries(groups).flatMap(([policy, paths]) => paths.map((path) => [path, policy])),
 ) as Record<string, ResponsePolicy>;
 export function responsePath(i: Interaction): string {
+  if (i.isModalSubmit?.() && i.customId.startsWith('suggestion:review:')) return 'suggest status';
+  if (i.isModalSubmit?.() && i.customId.startsWith('dm:reply:')) return 'dm reply';
+  if ((i.isModalSubmit?.() || i.isUserSelectMenu?.()) && i.customId.startsWith('voice:'))
+    return `voice ${i.customId.split(':')[1]}`;
   if (i.isModalSubmit?.() && i.customId.startsWith('warnings:form-revoke:'))
     return 'warnings revoke';
   if (i.isButton?.() && /^uwuPanel:(add|remove):/.test(i.customId))

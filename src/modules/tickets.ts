@@ -1,3 +1,4 @@
+import { modernEdit, sendModern, modernModal } from '../presentation.js';
 import {
   ActionRowBuilder,
   AttachmentBuilder,
@@ -131,12 +132,12 @@ async function updateTicketCard(app: App, guild: string, channel: TextChannel, t
           throw error;
         });
       if (message?.author.id === app.client.user!.id) {
-        await message.edit({ ...ticketStateCard(ticket), content: null, embeds: [] });
+        await message.edit(modernEdit({ ...ticketStateCard(ticket), content: null, embeds: [] }));
         updated = true;
       }
     }
     if (!updated) {
-      const message = await channel.send(ticketStateCard(ticket));
+      const message = await sendModern(channel, ticketStateCard(ticket));
       if (message?.id) ticket.controlMessage = message.id;
     }
     delete ticket.controlError;
@@ -348,7 +349,7 @@ async function performTicketControl(app: App, i: Interaction, action: string, re
         (ticket.description ? '\n' + safe(ticket.description, 1000) : '') +
         '\n**Closing reason:** ' +
         safe(ticket.reason, 500) +
-        '\nYou no longer have access to the ticket channel. Contact server support if you need further help. Replies to this DM are not monitored.' +
+        '\nYou no longer have access to the ticket channel. Contact server support if you need further help.' +
         (transcript
           ? '\nYour conversation transcript is attached.'
           : '\nA transcript could not be generated; contact staff for an export.'),
@@ -452,7 +453,8 @@ export const tickets: Module = {
       if (action === 'panel') {
         await requirePermission(app, i, P.ManageMessages);
         const channel = await destination(app, i, i.options.getChannel('channel', true).id);
-        await channel.send(
+        await sendModern(
+          channel,
           ticketCard(
             safe(i.options.getString('title') ?? 'How can we help?', 180),
             (
@@ -594,7 +596,7 @@ export const tickets: Module = {
             .setLabel('I agree to the rules')
             .setStyle(ButtonStyle.Success),
         );
-        const message = await channel.send({
+        const message = await sendModern(channel, {
           embeds: [embed('Server rules', i.options.getString('rules', true))],
           components: [row],
           allowedMentions: noMentions,
@@ -685,7 +687,7 @@ export const tickets: Module = {
                 .setRequired(true),
             ),
           );
-        await i.showModal(modal);
+        await i.showModal(modernModal(modal));
       } else {
         assert(
           ['claim', 'close', 'reopen', 'delete', 'transcript'].includes(action),

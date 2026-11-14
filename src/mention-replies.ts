@@ -1,3 +1,4 @@
+import { sendModern } from './presentation.js';
 import { randomInt } from 'node:crypto';
 import { PermissionFlagsBits as P, type Message } from 'discord.js';
 import type { App } from './types.js';
@@ -56,7 +57,7 @@ export async function mentionReply(app: App, message: Message): Promise<void> {
   const response = choices[randomInt(choices.length)]!;
   // Choose before sending so simultaneous mentions cannot select the same previous line.
   previousResponses.set(app, response);
-  await channel.send({
+  await sendModern(channel, {
     content: `<@${message.author.id}> ${response}\n${help}`,
     allowedMentions: { parse: [], users: [message.author.id], roles: [], repliedUser: false },
   });

@@ -1,3 +1,4 @@
+import { sendModern } from '../presentation.js';
 import { ActionRowBuilder, StringSelectMenuBuilder, PermissionFlagsBits as P } from 'discord.js';
 import { randomUUID } from 'node:crypto';
 import type { App, Module, Interaction, Command } from '../types.js';
@@ -69,7 +70,7 @@ export const roles: Module = {
           .setMinValues(0)
           .setMaxValues(options.length)
           .addOptions(options);
-        const message = await channel.send({
+        const message = await sendModern(channel, {
           content:
             'Select the community roles you want. Unselected roles from this panel will be removed.',
           components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)],

@@ -286,6 +286,8 @@ export class Store {
         'uwuPanel',
         'announcementDelivery',
         'commandReceipt',
+        'dmReceipt',
+        'suggestionAction',
         'confession',
         'confessionAuthor',
         'confessionLink',
@@ -332,6 +334,7 @@ export class Store {
         'reportCooldown',
         'suggestCooldown',
         'dmCooldown',
+        'stickyPost',
         'purgeDeletion',
       ])
         this.db
@@ -349,7 +352,7 @@ export class Store {
         .run(guild, cutoff);
       this.db
         .prepare(
-          "DELETE FROM entries WHERE guild=? AND kind='suggestion' AND json_extract(data,'$.state')!='open' AND updated<?",
+          "DELETE FROM entries WHERE guild=? AND kind='suggestion' AND json_extract(data,'$.state') IN ('declined','implemented') AND updated<?",
         )
         .run(guild, cutoff);
       this.db

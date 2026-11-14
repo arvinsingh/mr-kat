@@ -1,3 +1,4 @@
+import { sendModern } from './presentation.js';
 import {
   PermissionFlagsBits as P,
   type GuildTextBasedChannel,
@@ -55,7 +56,7 @@ export async function send(
   options: string | MessageCreateOptions,
 ) {
   const channel = await textChannel(app, guild, channelId);
-  return channel.send({
+  return sendModern(channel, {
     ...(typeof options === 'string' ? { content: options } : options),
     allowedMentions: noMentions,
   });

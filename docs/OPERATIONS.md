@@ -21,6 +21,12 @@ Owner setup starts with `/setup`, `/diagnose`, and `/help audience:owners`. Perm
 
 Register commands after adding or updating features. Publish `/ticket panel` for the integrated support card, and use `/warnings panel` for the private warning dashboard. Warning escalation stays off unless configured; existing threshold settings retain timeout behavior. Review `/warnings status` and the owner policy controls before enabling automatic kicks. `/mentionguard setup` defaults to server-wide monitoring; optional `channel` limits scope, and `support_channel` selects the redirect destination.
 
+Current cards and forms use Discord Components V2. Republish older panels/announcements when you want the new layout. Announcements support `---` on its own line for a divider. New voice rooms get right-side controls in their built-in chat; the optional public creation notice is brief. Existing rooms can use `/voice panel`.
+
+As owner, configure `staffRoles`, then run `/logs setup` to create a private Bot Logs category and missing log channels. Rerunning reuses private destinations under the selected category. This selects the new destinations without deleting old channels. `/logs status` lists them. The separate DM inbox uses one staff thread per user; staff reply with its Reply button or `/dm reply`. Keep ordinary roles out of that channel, and review the [DM privacy details](../PRIVACY.md#confessions-and-dms). The existing `/setup logs:` shortcut changes event logs only, preserving the separate inbox.
+
+Run `/suggest setup channel:#suggestions` to select the board. Suggestion titles show their status, Comment opens the discussion, and staff can use Review or Reply as bot. Status changes attempt author DMs. `/say` defaults to the current channel/thread when channel is omitted. Stickies wait for two quiet minutes after the latest message, including bot posts; pending deadlines survive a restart.
+
 CI validates code only. Configure deployment for your chosen host separately. Keeping previous code does not make database rollback automatic; review compatibility before switching versions.
 
 ## Back up

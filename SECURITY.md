@@ -11,6 +11,7 @@ Use GitHub's private vulnerability reporting if available. If private reporting 
 - Warning escalation is opt-in. Review the threshold/action before confirming an owner policy, and use second-staff approval for kicks when appropriate. Revoked/expired warnings do not count; revocation does not undo earlier removals or timeouts. Keep message evidence, purge logs, and case exports in staff-only destinations.
 - Run one instance per token/database under an unprivileged host account. Keep Node.js and dependencies updated, restrict file access, and use persistent storage.
 - Backups contain private data. Store a protected copy off-host and test recovery before relying on it. Stop the bot before applying a restore; never delete SQLite WAL/SHM files as a shortcut for a lock error.
+- `/logs setup` creates private event-log destinations and a separate DM inbox. Configure staff roles first, inspect member-role overrides, and keep DM threads private. Ordinary incoming/outgoing DMs can contain personal information; staff must use Reply or `/dm reply` to send a response, while other thread messages remain internal. Confession notifications and personal reminders are excluded from the relay.
 - Confession anonymity applies to the bot interface, not host/database access. See [the privacy policy](PRIVACY.md).
 
 Build and type checks do not validate every live Discord permission or client behaviour. Review configuration and try destructive operations in a dedicated test server first. This project is provided as-is under the MIT license.

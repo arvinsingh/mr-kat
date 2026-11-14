@@ -1,3 +1,4 @@
+import { modernModal } from './presentation.js';
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -439,12 +440,14 @@ export async function warningPanelControl(app: App, i: Component): Promise<boole
       .setMaxLength(action === 'revoke' ? 1900 : 4);
     if (action === 'duration') field.setValue(String(panel.policy!.minutes));
     await i.showModal(
-      new ModalBuilder()
-        .setCustomId(`warnings:form-${action}:${formKey}`)
-        .setTitle(
-          action === 'revoke' ? `Revoke warning #${panel.selected}` : 'Warning timeout duration',
-        )
-        .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(field)),
+      modernModal(
+        new ModalBuilder()
+          .setCustomId(`warnings:form-${action}:${formKey}`)
+          .setTitle(
+            action === 'revoke' ? `Revoke warning #${panel.selected}` : 'Warning timeout duration',
+          )
+          .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(field)),
+      ),
     );
     return true;
   } else if (action === 'apply') {

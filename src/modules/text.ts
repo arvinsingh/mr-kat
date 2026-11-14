@@ -1,3 +1,4 @@
+import { sendModern, displayText } from '../presentation.js';
 import {
   ActionRowBuilder,
   AttachmentBuilder,
@@ -67,10 +68,10 @@ async function sourceText(channel: GuildTextBasedChannel, actorId: string, messa
     'Choose a normal channel message.',
   );
   assert(
-    source.content?.trim(),
+    (source.content || displayText(source)).trim(),
     'That message has no text to transform. Attachments and embed contents are not converted.',
   );
-  return source.content;
+  return source.content || displayText(source);
 }
 async function publish(
   channel: GuildTextBasedChannel,
@@ -87,7 +88,7 @@ async function publish(
       'The result exceeds 2,000 characters. The bot needs Attach Files to send the complete result.',
     );
   }
-  await channel.send({
+  await sendModern(channel, {
     ...(long
       ? { files: [new AttachmentBuilder(Buffer.from(result, 'utf8'), { name: `${effect}.txt` })] }
       : { content: result }),
@@ -222,15 +223,13 @@ export async function replyTextCommand(app: App, message: Message): Promise<bool
   } catch (error) {
     if (!(error instanceof UserError)) logError('text reply command', error);
     if (channel)
-      await channel
-        .send({
-          content:
-            error instanceof UserError
-              ? error.message
-              : 'The text effect could not be delivered. Check the channel before trying again.',
-          allowedMentions: noMentions,
-        })
-        .catch(() => undefined);
+      await sendModern(channel, {
+        content:
+          error instanceof UserError
+            ? error.message
+            : 'The text effect could not be delivered. Check the channel before trying again.',
+        allowedMentions: noMentions,
+      }).catch(() => undefined);
   }
   return true;
 }

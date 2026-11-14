@@ -22,6 +22,15 @@ interface Overview {
   notes: string[];
 }
 const overviews: Record<string, Overview> = {
+  logs: {
+    purpose:
+      'Create the private Bot Logs category and all missing log channels, including a separate DM inbox.',
+    examples: ['/logs setup', '/logs setup category:Bot Logs', '/logs status'],
+    notes: [
+      'Setup is owner-only and requires bot Manage Channels and Manage Roles. Existing private channels under the chosen category are reused; rerunning creates only missing channels. Other channels are not moved or deleted. Configured staff roles get access; administrators and the owner retain native access. With no staff roles configured, only the owner/administrators and bot see newly created logs.',
+      'The separate bot-dms channel contains one staff thread per user. Users converse in their own DMs; staff use the thread’s Reply button or /dm reply. Ordinary staff thread messages remain internal. Confession notifications and personal reminders are excluded. Previously combined /setup logs destinations affect event logs only and preserve the DM inbox.',
+    ],
+  },
   warnings: {
     purpose:
       'Use a guided private dashboard to inspect warnings, revoke invalid cases and configure automatic escalation.',
@@ -44,7 +53,7 @@ const overviews: Record<string, Overview> = {
       'Send a plain bot-authored message into an accessible server channel, without exposing the requesting staff member.',
     examples: ['/say channel:#general message:Welcome everyone!', '/say channel:#general'],
     notes: [
-      'Staff need Manage Messages and the staff allowlist, plus permission to post in the destination. The bot must also be able to post. Omit message to open a multiline composer (2,000 characters). Markdown and native references display normally; mention notifications are suppressed, including everyone/here.',
+      'Omit channel to post in the current channel or thread. Staff need Manage Messages and the staff allowlist, plus permission to post in the destination. The bot must also be able to post. Omit message to open a multiline composer (2,000 characters). Markdown and native references display normally; mention notifications are suppressed, including everyone/here.',
       'Messages are permanent channel posts; acknowledgements are private. Actor/destination are recorded privately; the audit receipt does not copy the body. Uncertain delivery is not retried automatically.',
     ],
   },
@@ -238,7 +247,7 @@ const overviews: Record<string, Overview> = {
       'MESSAGE EVIDENCE: /mod warn, kick or ban accepts optional evidence:MESSAGE_LINK (or a message ID from the current channel). Apps → Moderate with evidence opens a private action picker and reason form. Message text, author, timestamps and attachment references are retained with the case; no screenshot/file-upload workflow is required. /mod evidence case:NUMBER exports retained evidence privately. Source permissions, staff roles and action-specific hierarchy are checked. Public reply shortcuts are not added because they reveal who typed them.',
       'PRIVACY: public moderation notices and moderation DMs show the action, target, reason and case without naming the requesting/approving staff member. Private case/audit records retain actor and approval metadata. Discord native audit logs remain visible to authorized administrators.',
       'Warn records a case and attempts a DM; the warning remains recorded if DMs fail. Expiry affects active-warning counts.',
-      'Warnings, timeouts and timeout removals attempt a one-way DM with reason/case details. Kick/ban notices are attempted after approval, before removal; they say removal will be attempted next. Failed DMs do not cancel punishment. Delivery status appears in the response and staff log.',
+      'Warnings, timeouts and timeout removals attempt a DM with reason/case details. Kick/ban notices are attempted after approval, before removal; they say removal will be attempted next. Failed DMs do not cancel punishment. Delivery status appears in the response and staff log. With /logs setup configured, replies reach a private staff conversation thread.',
       'Successful member actions also post a normal message in the original command channel with case, member, time and reason; actor identities remain private. Two-person approval preserves that original channel. Use a staff channel if the reason is sensitive. Notes/case exports remain private. A failed channel notice is reported without reversing the completed action. Unbans also attempt a DM.',
       'Timeout maximum: 28 days. Kick/ban require confirmation; optional secondApproval requires another authorized staff member.',
       'Temporary bans use scheduled unbans; externally changed bans are not blindly removed.',
@@ -292,10 +301,10 @@ const overviews: Record<string, Overview> = {
       'MEMBER USE: Joining the lobby creates your room and moves you into it. You own it; no Manage Channels permission is required for your own room controls.',
       'lock restricts new joins; it does not disconnect current occupants. permit allows a selected member; block disconnects and blocks that member from this room and its chat, not the server. Native chat visibility follows View Channel, so locking new joins does not make chat private.',
       'transfer requires the new owner to be in the room. claim requires the existing owner to have left. Staff/protected members cannot be blocked.',
-      'Discord voice channels already include text chat. New rooms get one tagged owner message in that chat with commands and Lock/Unlock/Claim buttons. No separate companion channel is created, even with an older voiceCompanion:true export. The last person leaving deletes the room and its built-in chat; any legacy tracked companion is cleaned up at that time too. Ordinary voice channels are not cleaned up.',
+      'Discord voice channels already include text chat. New rooms get a short tagged owner card with right-side Rename, Capacity, Lock, Unlock, Permit, Block, Transfer and Claim buttons. No separate companion channel is created, even with an older voiceCompanion:true export. The last person leaving deletes the room and its built-in chat; any legacy tracked companion is cleaned up at that time too. Ordinary voice channels are not cleaned up.',
       'One owned room per member, 30 tracked rooms total, with no command creation cooldown. An existing owned room is reused.',
-      'notice_channel selects a normal text channel for lasting creation messages: creator, creation time, room link, cleanup behavior and member controls. These messages remain after room deletion. Give the bot Send Messages and Embed Links there. Clear voiceNoticeChannel through configuration import to disable notices. Omitted notice_channel keeps its current value.',
-      'panel shows private Lock/Unlock/Claim buttons. move is a separate staff action with native permissions and hierarchy checks.',
+      'notice_channel selects a normal text channel for short creation notices with creator, timestamp, room link and the room name in plain text. Controls stay in the room’s own built-in chat. Creation notices remain after room deletion. Give the bot Send Messages there. Clear voiceNoticeChannel through configuration import to disable notices. Omitted notice_channel keeps its current value.',
+      'panel shows the same controls privately. Rename/Capacity open short forms; Permit/Block/Transfer open member pickers. Controls require staying connected to that room and owner permissions are rechecked on submission. move is a separate staff action with native permissions and hierarchy checks.',
       'If nothing happens: /voice status, check View Channel/Connect/Manage Channels/Manage Roles/Move Members/Send Messages/Embed Links/Read Message History, and leave/rejoin. Mute/deafen changes do not count as a join.',
     ],
   },
@@ -387,8 +396,8 @@ const overviews: Record<string, Overview> = {
       '/announce schedule channel:#announcements title:Game night text:Starting soon in:2h',
     ],
     notes: [
-      'builder opens a form; send publishes immediately; schedule uses a durable job. The builder and everyone form accept a title up to 256 characters and a multiline body up to 4000 characters. Selected reference tags may extend the body to 4096 characters; oversized output is rejected instead of truncated.',
-      'everyone opens the Markdown-capable builder, then shows a private formatted preview and Confirm/Cancel. Confirm posts @everyone as message content above the announcement embed, notifying the destination audience according to their Discord settings. Cancelling sends nothing. The preview expires after five minutes and its prompt disappears after selection.',
+      'builder opens a form; send publishes immediately; schedule uses a durable job. The builder and everyone form accept a title up to 256 characters and a multiline body up to 4000 characters. Selected reference tags may extend the body to 4096 characters; oversized input is rejected instead of truncated. All announcement paths use neutral Components V2 cards without a coloured accent. A line containing only --- creates a native divider outside fenced code blocks. Long posts are split into tracked continuation messages; editing any tracked page updates the whole announcement and removes obsolete continuations without notifying again.',
+      'everyone opens the Markdown-capable builder, then shows a private formatted preview and Confirm/Cancel. Confirm posts @everyone in the first text component above the announcement card, notifying the destination audience according to their Discord settings. Cancelling sends nothing. The preview expires after five minutes and its action prompt disappears after selection. Continuation pages do not ping. Additional everyone/here text in an everyone announcement is neutralized so only the intentional first-page notification is allowed.',
       'everyone requires Manage Messages and Mention Everyone on the sender in the destination, the staff allowlist, and bot permission to Mention Everyone, Embed Links and send there. Authority is checked when opening, previewing and confirming. Revoked permissions or a disabled messages module prevent delivery.',
       'edit accepts a tracked bot announcement ID, never arbitrary member messages.',
       'Scheduled delivery is attempted at most once; inspect /jobs after an interrupted send before rescheduling.',
@@ -412,7 +421,7 @@ const overviews: Record<string, Overview> = {
     purpose: 'Staff configure a persistent notice that is refreshed when a text channel is active.',
     examples: ['/sticky set text:Please read the channel rules', '/sticky remove'],
     notes: [
-      'Refresh is limited to once per five minutes; the previous bot notice is removed. This is not a timer that posts to inactive channels.',
+      'Each new message, including bot posts, embeds and components, starts or restarts a two-minute wait. The sticky reposts after two quiet minutes; pending deadlines survive restart. The previous sticky is removed; sticky posts do not start another wait. With no new messages there is no repeated posting. /sticky remove cancels pending refreshes.',
     ],
   },
   poll: {
@@ -437,7 +446,8 @@ const overviews: Record<string, Overview> = {
       '/suggest status id:REFERENCE state:accepted reason:Scheduled',
     ],
     notes: [
-      'Suggestions are public in the current channel. States: open, accepted, declined, implemented.',
+      'The owner first runs /suggest setup channel:#suggestions. All suggestions go to that destination. The card keeps the original author ID and display name after every decision. States: open, under_review, needs_info, accepted, in_progress, implemented, declined.',
+      'The title includes the current status. Comment opens the discussion thread directly; type normally to reply under your own name. Staff can instead use Reply as bot inside the thread (Manage Messages plus staff allowlist). Review is staff-only and opens a status/reason form. Every status update attempts an author DM with a suggestion link; needs_info asks for more details. Blocked DMs do not undo saved decisions. The bot needs Create Public Threads and Send Messages in Threads. Old Comment controls open a thread link and refresh the card.',
     ],
   },
   remind: {
@@ -523,10 +533,10 @@ const overviews: Record<string, Overview> = {
   },
   confess: {
     purpose:
-      'Open a private form and submit a confession anonymously to members. The form discloses whether staff review or instant publication is enabled.',
+      'Open a private form and submit a confession anonymously to members. The form shows a brief anonymous notice; read this help for privacy and publication details.',
     examples: ['/confess'],
     notes: [
-      'The owner first configures /confession setup. The form states the current privacy mode before submission.',
+      'The owner first configures /confession setup. The form says only that the confession or reply is anonymous. Review the privacy modes in this help before submitting.',
       'internal: IDs are kept only for OP labels, thread-specific anonymous aliases and reply notifications. No bot command reveals them to members, moderators, administrators or the owner. Host/database operators and backups can still access stored data. unlinked: no author link is retained and linked threads/DMs are unavailable.',
       'The bot posts approved text as a new bot message, without public command attribution, author avatar or member ID. Mentions do not ping.',
       'Discord processes the interaction; the bot cannot promise anonymity from Discord, the host operator, or identifying details you write yourself.',
@@ -551,7 +561,7 @@ const overviews: Record<string, Overview> = {
       'Use a public destination and, for review mode, a staff-only review channel. Instant mode needs no review channel. Confessions are disabled until explicitly configured.',
       'The server owner selects /confession mode value:review or value:instant. Review is the default for existing servers. Returning to review mode requires a valid private review channel.',
       'Approve/Reject buttons require current Manage Messages permission and staff allowlist membership. A submission is published at most once.',
-      'Author lookup has been removed for everyone, including the owner and legacy submissions. Old staff settings normalize to internal mode. A one-time compatibility upgrade enables internal linking for future forms on enabled legacy unlinked setups. Older records keep their unlinked privacy and unknown OP; new replies disclose internal linking. A later explicit owner choice of unlinked is respected.',
+      'Author lookup has been removed for everyone, including the owner and legacy submissions. Old staff settings normalize to internal mode. A one-time compatibility upgrade enables internal linking for future forms on enabled legacy unlinked setups. Older records keep their unlinked privacy and unknown OP; new replies use internal linking as documented here. A later explicit owner choice of unlinked is respected.',
       'thread creates or attaches the discussion thread after a partial creation failure. Unlocked archived threads reopen automatically on reply; staff locks and closed discussions require reopen. close locks/archives it; reopen unlocks/unarchives a retained discussion. Replies pending review stay pending while closed. remove deletes a post and closes a root discussion without deleting its replies. Startup/hourly maintenance repairs Reply controls on retained posts in threaded mode, up to 25 per pass. Older unlinked roots can receive newly linked replies, but their original authors remain unknown and cannot receive OP DMs until they join/reply.',
       'The bot needs Create Public Threads, Send Messages in Threads and Embed Links for internal mode, plus Manage Threads for close/reopen/remove. Members only need to read the discussion and use application commands. Deny ordinary Send Messages in Threads in the publication channel to encourage bot-only anonymous replies; staff/role overrides may still permit direct typing.',
       'Report discussion sends staff a post reference without participant identities. Staff review cards, public posts, logs and /jobs do not expose internal recipient records. Participant records expire with retention; an expired discussion cannot accept replies even if its public post remains.',
@@ -573,7 +583,7 @@ const overviews: Record<string, Overview> = {
   },
   dm: {
     purpose:
-      'Authorized staff send a confirmed one-way server notice to one current member, or maintain reusable templates.',
+      'Authorized staff send confirmed notices and continue conversations through a separate private DM inbox.',
     examples: [
       '/dm send member:@Member message:Please check the rules reason:Onboarding follow-up',
       '/dm template name:welcome text:Welcome {name} to {server}!',
@@ -582,15 +592,15 @@ const overviews: Record<string, Overview> = {
     ],
     notes: [
       'Requires Manage Server and the configured staff allowlist; the messages module must be enabled. Normal members cannot send notices. Permission and target membership are checked again at confirmation.',
-      'Send/from-template show a private preview and require confirmation. There is no sender cooldown; confirmations remain single-use. No mass DM operation or reply relay is provided.',
+      'Send/from-template show a private preview and require confirmation. There is no sender cooldown; confirmations remain single-use. /dm reply message:TEXT works inside a tracked staff DM conversation thread and sends the reply without staff identity. The thread also has a Reply button. Ordinary messages typed in staff threads remain internal.',
       'Templates support {user}, {name}, {server}. Names use 1–32 letters/digits/underscores/hyphens; at most 100 templates. Saving the same name replaces it.',
-      'Staff logs record sender, recipient, audit reason and delivery result, not the message body. sent means accepted by Discord, not read. blocked/failed/uncertain are reported; uncertain sends are never automatically retried. Confirmation records temporarily retain the draft and expire.',
-      'Incoming DM replies are not monitored. Messages identify the server and say they are one-way staff notices.',
+      'With a private logs.dm destination configured, ordinary outgoing DM bodies and delivery results are mirrored into staff conversation threads. Incoming user messages and attachment links are forwarded there. The log category is private and no user is added to staff threads. The bot requires the Direct Messages intent in code and Create Public Threads/Send Messages in Threads. Configure using /logs setup. Messages disclose that replies go to server staff.',
+      'Confession notifications and personal reminders remain outside the staff relay. Direct replies referencing those private notifications are not forwarded. blocked/failed/uncertain delivery is reported and never automatically retried. Conversation bodies stay in Discord threads; SQLite keeps thread mappings and delivery receipts. Staff control Discord thread retention/deletion.',
     ],
   },
   onboarding: {
     purpose:
-      'Owner configures welcome embeds, an optional one-way welcome DM, onboarding links and multiple safe automatic roles.',
+      'Owner configures welcome cards, an optional welcome DM, onboarding links and multiple safe automatic roles.',
     examples: [
       '/onboarding setup channel:#welcome welcome_dm:true rules_channel:#rules roles_channel:#roles introduction_channel:#introductions',
       '/onboarding message text:Welcome {user} to {server}! dm_text:Welcome {name}! Choose roles and introduce yourself.',
@@ -646,6 +656,8 @@ const memberPaths = new Set([
   'voice panel',
 ]);
 const ownerPaths = new Set([
+  'logs setup',
+  'suggest setup',
   'warnings configure',
   'mentionguard setup',
   'mentionguard disable',

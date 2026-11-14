@@ -1,3 +1,4 @@
+import { sendModern } from './presentation.js';
 import {
   PermissionFlagsBits as P,
   ChannelType,
@@ -17,6 +18,8 @@ import type { RoleTimer } from './modules/roles.js';
 import { heartbeatTick } from './modules/heartbeat.js';
 import { runPurge } from './purge.js';
 import { expireUwuLocks } from './uwulock.js';
+import { publishAnnouncement } from './announcements.js';
+import { stickyTick } from './sticky.js';
 
 export async function jobAuthority(
   app: App,
@@ -247,10 +250,15 @@ export async function runJob(app: App, job: Job): Promise<void> {
     if (job.kind === 'reminder') {
       const user = await app.client.users.fetch(String(p.user));
       app.store.updateJob(job.id, { ...p, deliveryStarted: true });
-      await user.send({
+      const notice = await sendModern(user, {
         embeds: [embed(`Reminder · ${String(p.server).slice(0, 150)}`, String(p.text), 'reminder')],
         allowedMentions: noMentions,
       });
+      if (notice?.id)
+        app.store.put(job.guild, 'privateDM', notice.id, {
+          user: String(p.user),
+          kind: 'reminder',
+        });
     } else {
       const channel = await textChannel(app, job.guild, String(p.channel));
       await jobAuthority(app, job, P.ManageMessages, channel);
@@ -262,14 +270,14 @@ export async function runJob(app: App, job: Job): Promise<void> {
         'The requesting staff member cannot post here.',
       );
       app.store.updateJob(job.id, { ...p, deliveryStarted: true });
-      const message = await channel.send({
-        embeds: [embed(String(p.title), String(p.text), 'announcement')],
-        allowedMentions: noMentions,
-      });
-      app.store.put(job.guild, 'announcement', message.id, {
-        actor: job.actor,
-        channel: channel.id,
-      });
+      await publishAnnouncement(
+        app,
+        job.guild,
+        job.actor,
+        channel,
+        String(p.title),
+        String(p.text),
+      );
     }
     return;
   }
@@ -291,6 +299,7 @@ export class Scheduler {
     this.active = true;
     try {
       await heartbeatTick(this.app).catch((error) => logError('heartbeat tick', error));
+      await stickyTick(this.app).catch((error) => logError('sticky tick', error));
       await expireUwuLocks(this.app).catch((error) => logError('uwu expiry', error));
       let job;
       for (let count = 0; count < 5 && (job = this.app.store.claimJob()); count++) {

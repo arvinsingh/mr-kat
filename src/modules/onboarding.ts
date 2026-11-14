@@ -1,3 +1,4 @@
+import { modernEdit } from '../presentation.js';
 import { PermissionFlagsBits as P, type GuildMember, type ButtonInteraction } from 'discord.js';
 import type { App, Module } from '../types.js';
 import type { GuildConfig } from '../config.js';
@@ -56,7 +57,7 @@ export async function onboardingButtons(member: GuildMember, cfg: GuildConfig) {
 const nativeRolesInstructions =
   '**Mobile roles:** open the server channel list → **Channels & Roles** → **Customize** if shown. Use **Open server** below to reach the server; the desktop shortcut can open a blank page on mobile.';
 export function welcomeDMText(member: GuildMember, cfg: GuildConfig) {
-  return `${renderTemplate(cfg.welcomeDMText, member.user, member.guild.name)}${cfg.rolesSource === 'native' ? `\n\n${nativeRolesInstructions}` : ''}\n\nThis is a one-way welcome. Replies to this bot are not monitored.`;
+  return `${renderTemplate(cfg.welcomeDMText, member.user, member.guild.name)}${cfg.rolesSource === 'native' ? `\n\n${nativeRolesInstructions}` : ''}`;
 }
 // Upgrade an older Choose roles button in-place, including in DMs. No new message.
 export async function nativeRolesHelp(app: App, i: ButtonInteraction) {
@@ -70,17 +71,21 @@ export async function nativeRolesHelp(app: App, i: ButtonInteraction) {
     const guild = await app.client.guilds.fetch(app.guildId);
     const member = await guild.members.fetch(i.user.id);
     const cfg = app.store.config(app.guildId);
-    await i.editReply({
-      content: nativeRolesInstructions,
-      components: await onboardingButtons(member, { ...cfg, rolesSource: 'native' }),
-      allowedMentions: { parse: [] },
-    });
+    await i.editReply(
+      modernEdit({
+        content: nativeRolesInstructions,
+        components: await onboardingButtons(member, { ...cfg, rolesSource: 'native' }),
+        allowedMentions: { parse: [] },
+      }),
+    );
   } catch {
-    await i.editReply({
-      content:
-        'Open the server’s channel list → Channels & Roles → Customize. You must still be a member of the server. If the page is unavailable, contact staff.',
-      components: [],
-    });
+    await i.editReply(
+      modernEdit({
+        content:
+          'Open the server’s channel list → Channels & Roles → Customize. You must still be a member of the server. If the page is unavailable, contact staff.',
+        components: [],
+      }),
+    );
   }
   return true;
 }

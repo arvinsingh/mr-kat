@@ -1,3 +1,4 @@
+import { modernEdit, sendModern } from '../presentation.js';
 import {
   ChannelType,
   ReactionType,
@@ -241,7 +242,7 @@ export async function syncStarboard(
       try {
         const post = await board.messages.fetch(entry.boardMessage);
         assert(post.author.id === app.client.user!.id, 'Starboard post ownership changed.');
-        await post.edit(options);
+        await post.edit(modernEdit(options));
         entry.count = count;
         app.store.put(app.guildId, 'starboardEntry', source.id, entry);
         return;
@@ -266,7 +267,7 @@ export async function syncStarboard(
     };
     app.store.put(app.guildId, 'starboardEntry', source.id, entry);
     try {
-      const post = await board.send({
+      const post = await sendModern(board, {
         ...options,
         nonce: randomUUID().replaceAll('-', '').slice(0, 24),
         enforceNonce: true,

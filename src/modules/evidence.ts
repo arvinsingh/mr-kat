@@ -1,3 +1,4 @@
+import { modernModal } from '../presentation.js';
 import {
   ActionRowBuilder,
   StringSelectMenuBuilder,
@@ -91,35 +92,37 @@ export const evidenceControls: Module = {
         chosen === 'ban' ? P.BanMembers : chosen === 'kick' ? P.KickMembers : P.ModerateMembers,
       );
       await i.showModal(
-        new ModalBuilder()
-          .setCustomId(`evidence:${chosen}:${key}`)
-          .setTitle('Moderate with message evidence')
-          .addComponents(
-            new ActionRowBuilder<TextInputBuilder>().addComponents(
-              new TextInputBuilder()
-                .setCustomId('reason')
-                .setLabel('Reason')
-                .setStyle(TextInputStyle.Paragraph)
-                .setRequired(true)
-                .setMaxLength(1900),
+        modernModal(
+          new ModalBuilder()
+            .setCustomId(`evidence:${chosen}:${key}`)
+            .setTitle('Moderate with message evidence')
+            .addComponents(
+              new ActionRowBuilder<TextInputBuilder>().addComponents(
+                new TextInputBuilder()
+                  .setCustomId('reason')
+                  .setLabel('Reason')
+                  .setStyle(TextInputStyle.Paragraph)
+                  .setRequired(true)
+                  .setMaxLength(1900),
+              ),
+              ...(chosen === 'kick'
+                ? []
+                : [
+                    new ActionRowBuilder<TextInputBuilder>().addComponents(
+                      new TextInputBuilder()
+                        .setCustomId('duration')
+                        .setLabel(
+                          chosen === 'warn'
+                            ? 'Warning expiry, e.g. 30d (optional)'
+                            : 'Ban duration, e.g. 7d (optional)',
+                        )
+                        .setStyle(TextInputStyle.Short)
+                        .setRequired(false)
+                        .setMaxLength(30),
+                    ),
+                  ]),
             ),
-            ...(chosen === 'kick'
-              ? []
-              : [
-                  new ActionRowBuilder<TextInputBuilder>().addComponents(
-                    new TextInputBuilder()
-                      .setCustomId('duration')
-                      .setLabel(
-                        chosen === 'warn'
-                          ? 'Warning expiry, e.g. 30d (optional)'
-                          : 'Ban duration, e.g. 7d (optional)',
-                      )
-                      .setStyle(TextInputStyle.Short)
-                      .setRequired(false)
-                      .setMaxLength(30),
-                  ),
-                ]),
-          ),
+        ),
       );
       return true;
     }

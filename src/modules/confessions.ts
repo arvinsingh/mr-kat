@@ -1,9 +1,11 @@
+import { updatedControls, sendModern, modernModal, modernEdit } from '../presentation.js';
 import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
   ModalBuilder,
+  TextDisplayBuilder,
   TextInputBuilder,
   TextInputStyle,
   PermissionFlagsBits as P,
@@ -151,9 +153,7 @@ export async function ensureConfessionThread(app: App, guild: string, root: Conf
   root.threadError = false;
   app.store.put(guild, 'confession', String(root.id), root);
   // Do not add real participants to the thread membership list.
-  await message
-    .edit({ components: controls(root.id), allowedMentions: noMentions })
-    .catch(() => undefined);
+  await message.edit(updatedControls(message, controls(root.id))).catch(() => undefined);
   return thread;
 }
 export async function reconcileConfessionControls(app: App) {
@@ -182,10 +182,7 @@ export async function reconcileConfessionControls(app: App) {
       const channel = await textChannel(app, app.guildId, data.channel);
       const message = await channel.messages.fetch(data.message!);
       if (message.author.id !== app.client.user!.id) continue;
-      await message.edit({
-        components: controls(data.parent ?? data.id, data.id),
-        allowedMentions: noMentions,
-      });
+      await message.edit(updatedControls(message, controls(data.parent ?? data.id, data.id)));
       data.controlsVersion = 2;
       app.store.put(app.guildId, 'confession', key, data);
     } catch {
@@ -211,7 +208,7 @@ async function reviewCard(app: App, guild: string, item: Confession) {
       .setLabel('Reject')
       .setStyle(ButtonStyle.Danger),
   );
-  const message = await review.send({
+  const message = await sendModern(review, {
     embeds: [
       embed(
         `Confession #${item.id} · review`,
@@ -281,7 +278,7 @@ async function publishConfession(
     app.store.put(guild, 'confessionParticipants', String(root.id), participants);
   }
   try {
-    const message = await channel.send({
+    const message = await sendModern(channel, {
       embeds: [
         embed(
           item.parent
@@ -531,27 +528,24 @@ async function showConfessionForm(app: App, i: Interaction, parent?: number) {
       `confess:submit:${cfg.privacy}:${cfg.reviewRequired ? 'review' : 'instant'}:${parent ?? 0}`,
     )
     .setTitle(parent ? `Reply to confession #${parent}` : 'Anonymous confession')
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        parent ? 'Your reply is anonymous.' : 'Your confession is anonymous.',
+      ),
+    )
     .addComponents(
       new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder()
           .setCustomId('text')
-          .setLabel(
-            cfg.reviewRequired
-              ? 'Confession (reviewed by staff)'
-              : 'Confession (posts immediately)',
-          )
-          .setPlaceholder(
-            cfg.privacy === 'internal'
-              ? 'IDs kept by bot for OP/reply DMs; no staff lookup. Host can access data.'
-              : 'No author link retained by the bot. Discord processes this interaction.',
-          )
+          .setLabel(parent ? 'Your reply' : 'Your confession')
+          .setPlaceholder(parent ? 'Write your reply here…' : 'Write your confession here…')
           .setStyle(TextInputStyle.Paragraph)
           .setRequired(true)
           .setMaxLength(1900),
       ),
     );
   assert('showModal' in i, 'Open a new confession form.');
-  await i.showModal(modal);
+  await i.showModal(modernModal(modal));
   // Return immediately so submitting the modal is never blocked by background thread creation.
 }
 export async function confessionNotifications(
@@ -909,17 +903,19 @@ export const confessions: Module = {
     }
     const finalState =
       app.store.get<Confession>(i.guildId, 'confession', key!)?.state ?? item.state;
-    await i.message.edit({
-      embeds: [
-        embed(
-          `Confession #${item.id} · ${finalState}`,
-          `${item.parent ? `Reply to confession #${item.parent}\n\n` : ''}${safe(item.text, 1900)}`,
-          action === 'approve' ? 'success' : 'error',
-        ),
-      ],
-      components: [],
-      allowedMentions: noMentions,
-    });
+    await i.message.edit(
+      modernEdit({
+        embeds: [
+          embed(
+            `Confession #${item.id} · ${finalState}`,
+            `${item.parent ? `Reply to confession #${item.parent}\n\n` : ''}${safe(item.text, 1900)}`,
+            action === 'approve' ? 'success' : 'error',
+          ),
+        ],
+        components: [],
+        allowedMentions: noMentions,
+      }),
+    );
     await reply(i, `Confession #${item.id} ${item.state}.`);
     return true;
   },

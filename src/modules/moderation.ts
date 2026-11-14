@@ -1,3 +1,4 @@
+import { sendModern, updatedControls } from '../presentation.js';
 import {
   AttachmentBuilder,
   PermissionFlagsBits as P,
@@ -397,7 +398,7 @@ export async function moderationConfirmation(app: App, i: Interaction, pending: 
         .setLabel('Approve (different staff member)')
         .setStyle(ButtonStyle.Danger),
     );
-    const message = await channel.send({
+    const message = await sendModern(channel, {
       embeds: [
         embed(
           'Moderation approval requested',
@@ -632,7 +633,7 @@ export const moderation: Module = {
     try {
       await executeModeration(app, i, pending.payload, pending.actor);
     } finally {
-      await i.message.edit({ components: [], allowedMentions: noMentions }).catch(() => undefined);
+      await i.message.edit(updatedControls(i.message, [])).catch(() => undefined);
     }
     return true;
   },

@@ -18,7 +18,13 @@ import { checkSetup, healthTopics, type HealthTopic } from '../setup-health.js';
 
 type Setting = { label: string; topic: HealthTopic; types?: ChannelType[]; roles?: number };
 const settings: Record<string, Setting> = {
-  logs: { label: 'All staff log destinations', topic: 'logging', types: [ChannelType.GuildText] },
+  logs: { label: 'All event log destinations', topic: 'logging', types: [ChannelType.GuildText] },
+  'logs.dm': { label: 'Private DM inbox', topic: 'logging', types: [ChannelType.GuildText] },
+  suggestionChannel: {
+    label: 'Suggestions destination',
+    topic: 'community',
+    types: [ChannelType.GuildText],
+  },
   staffRoles: { label: 'Staff allowlist roles', topic: 'roles', roles: 10 },
   selfRoles: { label: 'Bot self-service roles', topic: 'roles', roles: 25 },
   joinRoles: { label: 'Automatic join roles', topic: 'onboarding', roles: 25 },
@@ -82,9 +88,15 @@ function current(cfg: GuildConfig, key: string): unknown {
   return tail ? (value as Record<string, unknown>)[tail] : value;
 }
 function changed(cfg: GuildConfig, key: string, values: string[]): GuildConfig {
-  if (key === 'logs')
-    cfg.logs = Object.fromEntries(logKinds.map((kind) => [kind, values[0]])) as GuildConfig['logs'];
-  else if (key.includes('.')) {
+  if (key === 'logs') {
+    assert(cfg.logs.dm !== values[0], 'Choose a different channel from the DM inbox.');
+    cfg.logs = {
+      ...cfg.logs,
+      ...Object.fromEntries(
+        logKinds.filter((kind) => kind !== 'dm').map((kind) => [kind, values[0]]),
+      ),
+    } as GuildConfig['logs'];
+  } else if (key.includes('.')) {
     const [head, tail] = key.split('.');
     (cfg as unknown as Record<string, Record<string, unknown>>)[head!]![tail!] = values[0];
   } else
@@ -143,12 +155,24 @@ export async function validateSelection(app: App, i: Interaction, key: string, v
       channel.permissionsFor(me)?.has(required),
       'The bot lacks required permissions in the selected channel. Fix its overrides and try again.',
     );
-    if (key === 'logs') {
+    if (key === 'logs' || key === 'logs.dm') {
       assert(
         !channel.permissionsFor(i.guild!.roles.everyone)?.has(P.ViewChannel),
         'Choose a staff-only channel. @everyone must not have View Channel.',
       );
       const cfg = app.store.config(i.guildId!);
+      if (key === 'logs.dm') {
+        assert(
+          !Object.entries(cfg.logs).some(([kind, id]) => kind !== 'dm' && id === channel.id),
+          'Use a separate channel for DM conversations.',
+        );
+        assert(
+          channel
+            .permissionsFor(me)
+            ?.has([P.ReadMessageHistory, P.CreatePublicThreads, P.SendMessagesInThreads]),
+          'The bot needs Read Message History, Create Public Threads and Send Messages in Threads in its DM inbox.',
+        );
+      }
       for (const role of i.guild!.roles.cache.values())
         if (
           role.id !== i.guildId &&
@@ -285,7 +309,7 @@ const steps: Record<HealthTopic, string> = {
   overview:
     '1. Configure private logs. 2. Select staff roles and grant their native Discord permissions. 3. Configure only features you need. 4. Test with an ordinary member. 5. Open /backup and verify recovery readiness. Panels can select existing channels/roles; they do not grant permissions or create them.',
   logging:
-    'Create a staff-only log channel. Select All staff log destinations below, or split categories with /config log. Deny View Channel to ordinary roles. Message snapshots are optional: /config set key:snapshotDays value:7. Full available edit/deletion content is logged; old uncached content cannot be recovered.',
+    'Set staffRoles, then run /logs setup to create the private category and missing event/DM channels. Reruns reuse channels; /logs status lists them. Or select existing destinations below. Keep ordinary roles out. DM conversations use a separate inbox; staff reply with Reply or /dm reply. Message snapshots are optional: /config set key:snapshotDays value:7. Old uncached content cannot be recovered.',
   moderation:
     'Grant the bot the needed moderation permissions and put its role above targets. Configure protectedRoles/staffRoles via /config. /automod status checks native rules; report-only detects without deleting. /help command:mod and automod describe enforcement. Test with an ordinary member.',
   roles:

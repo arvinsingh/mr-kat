@@ -1,3 +1,4 @@
+import { modernModal, modernEdit, displayText } from '../presentation.js';
 import {
   ActionRowBuilder,
   AttachmentBuilder,
@@ -257,20 +258,22 @@ export async function uwuContext(app: App, i: MessageContextMenuCommandInteracti
       expires: Date.now() + 300000,
     } satisfies EditDraft);
     await i.showModal(
-      new ModalBuilder()
-        .setCustomId(`uwuEdit:${key}`)
-        .setTitle('Edit your UwU message')
-        .addComponents(
-          new ActionRowBuilder<TextInputBuilder>().addComponents(
-            new TextInputBuilder()
-              .setCustomId('text')
-              .setLabel('Your text (UwU conversion applied)')
-              .setStyle(TextInputStyle.Paragraph)
-              .setRequired(true)
-              .setMaxLength(4000)
-              .setValue(post.input),
+      modernModal(
+        new ModalBuilder()
+          .setCustomId(`uwuEdit:${key}`)
+          .setTitle('Edit your UwU message')
+          .addComponents(
+            new ActionRowBuilder<TextInputBuilder>().addComponents(
+              new TextInputBuilder()
+                .setCustomId('text')
+                .setLabel('Your text (UwU conversion applied)')
+                .setStyle(TextInputStyle.Paragraph)
+                .setRequired(true)
+                .setMaxLength(4000)
+                .setValue(post.input),
+            ),
           ),
-        ),
+      ),
     );
     return;
   }
@@ -288,7 +291,7 @@ export async function uwuContext(app: App, i: MessageContextMenuCommandInteracti
       i.guildId,
       'messages',
       'UwU message deleted by author',
-      `Author: <@${i.user.id}>\nChannel: <#${channel.id}>\nMessage ID: ${i.targetId}\nText: ${safeMentions(post.input)}\nDisplayed text: ${safeMentions(message.content)}`,
+      `Author: <@${i.user.id}>\nChannel: <#${channel.id}>\nMessage ID: ${i.targetId}\nText: ${safeMentions(post.input)}\nDisplayed text: ${safeMentions(message.content || displayText(message))}`,
     );
     await reply(i, 'Your transformed message was deleted.');
   } finally {
@@ -370,12 +373,21 @@ async function editPost(app: App, i: Component) {
     // Advance the revision before the API call: other open forms cannot replay an uncertain edit.
     const next = { ...post, input, revision: randomUUID() };
     app.store.put(i.guildId, 'uwuPost', draft.post, next);
-    const edited = await hook.editMessage(draft.post, {
-      ...body,
-      allowedMentions: noMentions,
-      attachments: keep.map((a) => ({ id: a.id })),
-      ...(channel.isThread() ? { threadId: channel.id } : {}),
-    });
+    const edited = await hook.editMessage(
+      draft.post,
+      modernEdit({
+        ...body,
+        components: keep.map((attachment) => ({
+          type: 13 as const,
+          file: { url: `attachment://${attachment.name}` },
+          ...(attachment.spoiler ? { spoiler: true } : {}),
+        })),
+        allowedMentions: noMentions,
+        withComponents: true,
+        attachments: keep.map((a) => ({ id: a.id })),
+        ...(channel.isThread() ? { threadId: channel.id } : {}),
+      }),
+    );
     next.bodyAttachment = edited.attachments.find(
       (a) => a.name === `uwulock-${post.source}.txt`,
     )?.id;

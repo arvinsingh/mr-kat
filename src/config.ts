@@ -24,6 +24,7 @@ export const logKinds = [
   'admin',
   'reports',
   'automod',
+  'dm',
 ] as const;
 export type LogKind = (typeof logKinds)[number];
 export const configSchema = z
@@ -67,6 +68,8 @@ export const configSchema = z
     rolesChannel: id.optional(),
     rolesSource: z.enum(['channel', 'native', 'none']).default('channel'),
     introductionChannel: id.optional(),
+    suggestionChannel: id.optional(),
+    logsCategory: id.optional(),
     textEffects: z
       .object({
         enabled: z.boolean().default(true),

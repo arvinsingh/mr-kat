@@ -186,8 +186,12 @@ export async function checkSetup(
         await channel(
           `${kind} log`,
           cfg.logs[kind],
-          text,
-          [...posting, P.ReadMessageHistory],
+          kind === 'dm' ? [ChannelType.GuildText] : text,
+          [
+            ...posting,
+            P.ReadMessageHistory,
+            ...(kind === 'dm' ? [P.CreatePublicThreads, P.SendMessagesInThreads] : []),
+          ],
           true,
         );
       add(
@@ -371,6 +375,14 @@ export async function checkSetup(
     }
   } else if (topic === 'community') {
     if (!disabled('community')) {
+      if (cfg.suggestionChannel)
+        await channel(
+          'Suggestions destination',
+          cfg.suggestionChannel,
+          [ChannelType.GuildText],
+          [...posting, P.ReadMessageHistory, P.CreatePublicThreads, P.SendMessagesInThreads],
+        );
+      else add('warn', 'Suggestions destination', 'Run /suggest setup channel:#suggestions.');
       const locks = app.store
         .entries<{ channel: string; expires: number }>(app.guildId, 'uwuLock', 1000)
         .filter(({ data }) => data.expires > Date.now());

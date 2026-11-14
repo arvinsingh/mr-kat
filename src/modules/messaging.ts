@@ -1,3 +1,5 @@
+import { replyToDM } from '../dm-conversations.js';
+import { sendModern, modernModal } from '../presentation.js';
 import {
   PermissionFlagsBits as P,
   ModalBuilder,
@@ -30,7 +32,7 @@ async function sendChannelText(app: App, i: Interaction, channelId: string, text
     actor: i.user.id,
   });
   try {
-    const message = await channel.send({
+    const message = await sendModern(channel, {
       content: text,
       allowedMentions: noMentions,
       nonce: key.slice(-24),
@@ -75,13 +77,13 @@ export async function deliverStaffDM(app: App, i: Interaction, pending: Confirma
     app,
     target.id,
     `${i.guild!.name.slice(0, 180)} · staff notice`,
-    `${safe(pending.payload.text, 2200)}\n\nSent by the server staff. This is a one-way notice; replies to this bot are not monitored.`,
+    `${safe(pending.payload.text, 2200)}\n\nSent by the server staff.`,
   );
   await app.audit(
     i.guildId!,
     'moderation',
     'Staff DM delivery',
-    `Staff: <@${i.user.id}> · Recipient: <@${target.id}> · ${result}\nReason: ${safeMentions(pending.payload.reason)}\nMessage body is not logged.`,
+    `Staff: <@${i.user.id}> · Recipient: <@${target.id}> · ${result}\nReason: ${safeMentions(pending.payload.reason)}\nMessage body is kept only in the configured private DM inbox.`,
   );
   await reply(i, {
     content: `DM delivery: ${result}. ${result === 'uncertain' ? 'Check with the recipient before retrying; it may have arrived.' : ''}`,
@@ -91,30 +93,36 @@ export async function deliverStaffDM(app: App, i: Interaction, pending: Confirma
 export const messaging: Module = {
   commands: {
     say: async (app, i) => {
-      const channel = await destination(app, i, i.options.getChannel('channel', true).id);
+      const channel = await destination(app, i, i.options.getChannel('channel')?.id ?? i.channelId);
       await requirePermission(app, i, P.ManageMessages, channel);
       enabled(app, i.guildId, 'messages');
       const text = i.options.getString('message');
       if (text) return sendChannelText(app, i, channel.id, text);
       await i.showModal(
-        new ModalBuilder()
-          .setCustomId(`say:${channel.id}`)
-          .setTitle('Send a channel message')
-          .addComponents(
-            new ActionRowBuilder<TextInputBuilder>().addComponents(
-              new TextInputBuilder()
-                .setCustomId('message')
-                .setLabel('Message (Markdown; no mention pings)')
-                .setStyle(TextInputStyle.Paragraph)
-                .setRequired(true)
-                .setMaxLength(2000),
+        modernModal(
+          new ModalBuilder()
+            .setCustomId(`say:${channel.id}`)
+            .setTitle('Send a channel message')
+            .addComponents(
+              new ActionRowBuilder<TextInputBuilder>().addComponents(
+                new TextInputBuilder()
+                  .setCustomId('message')
+                  .setLabel('Message (Markdown; no mention pings)')
+                  .setStyle(TextInputStyle.Paragraph)
+                  .setRequired(true)
+                  .setMaxLength(2000),
+              ),
             ),
-          ),
+        ),
       );
     },
     dm: async (app, i) => {
       enabled(app, i.guildId, 'messages');
       await requirePermission(app, i, P.ManageGuild);
+      if (i.options.getSubcommand() === 'reply') {
+        await replyToDM(app, i, i.options.getString('message', true));
+        return;
+      }
       const action = i.options.getSubcommand();
       const name = i.options.getString('name');
       if (name)

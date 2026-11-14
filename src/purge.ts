@@ -6,6 +6,7 @@ import { textChannel } from './discord.js';
 import { botPermission } from './permissions.js';
 import { messageLogExcludedChannel } from './message-logs.js';
 import { channelLabel } from './channel-label.js';
+import { displayText } from './presentation.js';
 
 interface PurgeEvidence {
   job: string;
@@ -133,6 +134,12 @@ export async function runPurge(
                   .join('\n'),
               )
               .join('\n');
+            const body =
+              message.content ||
+              displayText(message) ||
+              (message.content === undefined
+                ? (app.store.message(id)?.content ?? '[Unavailable before deletion]')
+                : '');
             const text =
               'Message ID: ' +
               id +
@@ -150,9 +157,7 @@ export async function runPurge(
                 ? new Date(message.createdTimestamp).toISOString()
                 : 'unknown') +
               '\nContent: ' +
-              (message.content ??
-                app.store.message(id)?.content ??
-                '[Unavailable before deletion]') +
+              body +
               (attachments ? '\n' + attachments : '') +
               (embeds ? '\nEmbed text:\n' + embeds : '');
             app.store.put(job.guild, 'purgeEvidence', job.id + ':' + id, {
@@ -162,11 +167,7 @@ export async function runPurge(
               order: ids.indexOf(id),
               username: author?.username ?? author?.tag ?? 'Unknown author',
               content:
-                (message.content ??
-                  app.store.message(id)?.content ??
-                  '[Unavailable before deletion]') +
-                (attachments ? '\n' + attachments : '') +
-                (embeds ? '\n' + embeds : ''),
+                body + (attachments ? '\n' + attachments : '') + (embeds ? '\n' + embeds : ''),
             } satisfies PurgeEvidence);
           }
         });

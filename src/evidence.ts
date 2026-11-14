@@ -1,3 +1,4 @@
+import { displayText } from './presentation.js';
 import { PermissionFlagsBits as P, type Message } from 'discord.js';
 import type { App, Interaction } from './types.js';
 import { assert, safeMentions } from './util.js';
@@ -49,7 +50,7 @@ export async function captureEvidence(app: App, i: Interaction, source: Message)
     id: message.id,
     channel: message.channelId,
     author: message.author.id,
-    content: message.content,
+    content: message.content || displayText(message),
     created: message.createdTimestamp,
     capturedAt: Date.now(),
     url: message.url,

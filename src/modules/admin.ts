@@ -10,6 +10,11 @@ import { setupPanel, validateSelection } from './setup.js';
 import type { HealthTopic } from '../setup-health.js';
 
 export async function validateConfig(app: App, i: Interaction, cfg: GuildConfig): Promise<void> {
+  assert(
+    !cfg.logs.dm ||
+      !Object.entries(cfg.logs).some(([kind, id]) => kind !== 'dm' && id === cfg.logs.dm),
+    'Use a separate channel for DM conversations.',
+  );
   for (const roleId of new Set(
     [
       ...cfg.protectedRoles,
@@ -55,6 +60,8 @@ export async function validateConfig(app: App, i: Interaction, cfg: GuildConfig)
       cfg.rulesChannel,
       cfg.rolesSource === 'channel' ? cfg.rolesChannel : undefined,
       cfg.introductionChannel,
+      cfg.suggestionChannel,
+      cfg.logsCategory,
       cfg.mentionReplies.commandsChannel,
       cfg.ticketCategory,
       cfg.voiceCategory,
@@ -70,10 +77,10 @@ export async function validateConfig(app: App, i: Interaction, cfg: GuildConfig)
     if (Object.values(cfg.logs).includes(channelId) || cfg.welcomeChannel === channelId)
       await textChannel(app, i.guildId!, channelId);
   }
-  for (const category of [cfg.ticketCategory, cfg.voiceCategory].filter(Boolean))
+  for (const category of [cfg.ticketCategory, cfg.voiceCategory, cfg.logsCategory].filter(Boolean))
     assert(
       (await i.guild!.channels.fetch(category!))?.type === 4,
-      'Ticket and voice categories must be categories.',
+      'Ticket, voice and log categories must be categories.',
     );
   if (cfg.welcomeChannel) {
     const welcome = await textChannel(app, i.guildId!, cfg.welcomeChannel);
@@ -269,7 +276,8 @@ export const admin: Module = {
       );
       await validateSelection(app, i, 'logs', [channel.id]);
       const cfg = app.store.config(i.guildId);
-      for (const kind of logKinds) cfg.logs[kind] = channel.id;
+      assert(cfg.logs.dm !== channel.id, 'Choose a different channel from the DM inbox.');
+      for (const kind of logKinds.filter((kind) => kind !== 'dm')) cfg.logs[kind] = channel.id;
       await validateConfig(app, i, cfg);
       app.store.setConfig(i.guildId, cfg, i.user.id);
       await reply(

@@ -1,3 +1,5 @@
+import { incomingDM } from './dm-conversations.js';
+import { refreshSticky } from './sticky.js';
 import { roleMentionReply } from './role-mentions.js';
 import { memberAvatarChanged, userAvatarChanged } from './member-logs.js';
 import {
@@ -35,7 +37,6 @@ import {
 const detector = new SpamDetector();
 const joins = new Map<string, number[]>(),
   adminBursts = new Map<string, number[]>();
-const stickyBusy = new Set<string>();
 
 export function events(app: App) {
   // EventEmitter does not await handlers. Every handler has its own rejection boundary.
@@ -64,6 +65,10 @@ export function events(app: App) {
       run('starboard thread deleted', () => starboardChannelChanged(app, thread.id, true));
   });
   app.client.on(Events.MessageCreate, (message) => {
+    if (!message.guildId) {
+      run('direct message relay', () => incomingDM(app, message));
+      return;
+    }
     if (message.guildId === app.guildId) run('message create', () => messageCreate(app, message));
   });
   app.client.on(Events.MessageUpdate, (old, message) => {
@@ -334,7 +339,9 @@ export function events(app: App) {
   });
 }
 async function messageCreate(app: App, message: Message) {
-  if (!message.guild || message.author.bot || message.webhookId) return;
+  if (!message.guild) return;
+  await refreshSticky(app, message).catch((error) => logError('sticky refresh', error));
+  if (message.author.bot || message.webhookId) return;
   const cfg = app.store.config(message.guild.id);
   let spamDetected = false;
   if (cfg.excludedChannels.includes(message.channelId)) return;
@@ -444,30 +451,6 @@ async function messageCreate(app: App, message: Message) {
             logError('automod enforcement', error);
           }
         }
-      }
-    }
-  }
-  if (cfg.modules.messages) {
-    const sticky = app.store.get<{ text: string; last: number; message?: string }>(
-      message.guild.id,
-      'sticky',
-      message.channelId,
-    );
-    if (sticky && sticky.last < Date.now() - 300000 && !stickyBusy.has(message.channelId)) {
-      stickyBusy.add(message.channelId);
-      try {
-        sticky.last = Date.now();
-        app.store.put(message.guild.id, 'sticky', message.channelId, sticky);
-        const old = sticky.message;
-        const sent = await send(app, message.guild.id, message.channelId, sticky.text);
-        sticky.message = sent.id;
-        app.store.put(message.guild.id, 'sticky', message.channelId, sticky);
-        if (old) {
-          const previous = await message.channel.messages.fetch(old).catch(() => null);
-          if (previous?.author.id === app.client.user!.id) await previous.delete();
-        }
-      } finally {
-        stickyBusy.delete(message.channelId);
       }
     }
   }

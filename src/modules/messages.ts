@@ -1,8 +1,10 @@
+import { modernModal } from '../presentation.js';
 import {
   PermissionFlagsBits as P,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  TextDisplayBuilder,
   ActionRowBuilder,
   type GuildTextBasedChannel,
 } from 'discord.js';
@@ -10,9 +12,15 @@ import type { App, Module, Interaction } from '../types.js';
 import { randomUUID } from 'node:crypto';
 import { requirePermission, botPermission, enabled } from '../permissions.js';
 import { assert, duration, safe, UserError } from '../util.js';
-import { confirm, reply, noMentions, type Confirmation } from '../ui.js';
+import { confirm, reply, type Confirmation } from '../ui.js';
 import { destination } from '../discord.js';
-import { announcementText, announcementEmbed } from '../announcements.js';
+import {
+  announcementText,
+  announcementEmbed,
+  announcementPages,
+  publishAnnouncement,
+  editAnnouncement,
+} from '../announcements.js';
 
 async function everyonePermission(app: App, i: Interaction, channel: GuildTextBasedChannel) {
   const member = await requirePermission(app, i, P.ManageMessages, channel);
@@ -35,7 +43,7 @@ export async function deliverEveryoneAnnouncement(app: App, i: Interaction, pend
   const userReference = typeof p.userReference === 'string' ? p.userReference : undefined;
   const channelReference = typeof p.channelReference === 'string' ? p.channelReference : undefined;
   await validateReferences(i, userReference, channelReference);
-  const card = announcementEmbed(String(p.title), String(p.text));
+  announcementEmbed(String(p.title), String(p.text));
   const key = String(p.deliveryId);
   assert(
     /^[a-f0-9]{24}$/.test(key),
@@ -53,14 +61,15 @@ export async function deliverEveryoneAnnouncement(app: App, i: Interaction, pend
   app.store.put(i.guildId!, 'announcementDelivery', key, receipt);
   let message;
   try {
-    // @everyone must be message content to notify; embed-only mentions do not notify.
-    message = await channel.send({
-      content: '@everyone',
-      embeds: [card],
-      allowedMentions: { parse: ['everyone'], users: [], roles: [], repliedUser: false },
-      nonce: key,
-      enforceNonce: true,
-    });
+    message = await publishAnnouncement(
+      app,
+      i.guildId!,
+      i.user.id,
+      channel,
+      String(p.title),
+      String(p.text),
+      { everyone: true, nonce: key },
+    );
   } catch (error) {
     const { status, code } = error as { status?: number; code?: number };
     const rejected =
@@ -77,11 +86,6 @@ export async function deliverEveryoneAnnouncement(app: App, i: Interaction, pend
   receipt.state = 'sent';
   receipt.message = message.id;
   app.store.put(i.guildId!, 'announcementDelivery', key, receipt);
-  app.store.put(i.guildId!, 'announcement', message.id, {
-    actor: i.user.id,
-    channel: channel.id,
-    everyone: true,
-  });
   await reply(i, `Announcement published in <#${channel.id}> with @everyone.`);
 }
 
@@ -184,6 +188,9 @@ export const messages: Module = {
             `announce:${channel.id}:${userReference ?? '0'}:${channelReference ?? '0'}${action === 'everyone' ? ':everyone' : ''}`,
           )
           .setTitle(action === 'everyone' ? 'Announcement · @everyone' : 'Build announcement')
+          .addTextDisplayComponents(
+            new TextDisplayBuilder().setContent('Discord Markdown is supported.'),
+          )
           .addComponents(
             new ActionRowBuilder<TextInputBuilder>().addComponents(
               new TextInputBuilder()
@@ -197,15 +204,13 @@ export const messages: Module = {
               new TextInputBuilder()
                 .setCustomId('text')
                 .setLabel('Announcement')
-                .setPlaceholder(
-                  'Use {user} and {channel} for selected mentions; other text supports Discord Markdown.',
-                )
+                .setPlaceholder('Your announcement')
                 .setStyle(TextInputStyle.Paragraph)
                 .setMaxLength(4000)
                 .setRequired(true),
             ),
           );
-        await i.showModal(modal);
+        await i.showModal(modernModal(modal));
         return;
       }
       const title = i.options.getString('title', true),
@@ -213,7 +218,7 @@ export const messages: Module = {
           user: userReference,
           channel: channelReference,
         });
-      const card = announcementEmbed(title, text);
+      announcementEmbed(title, text);
       if (action === 'schedule') {
         const key = app.store.job(
           i.guildId,
@@ -233,19 +238,9 @@ export const messages: Module = {
         );
         const tracked = app.store.get(i.guildId, 'announcement', message.id);
         assert(tracked, 'This message is not a tracked announcement.');
-        await message.edit({
-          embeds: [card],
-          allowedMentions: noMentions,
-        });
+        await editAnnouncement(app, i.guildId, channel, message, title, text);
       } else {
-        const message = await channel.send({
-          embeds: [card],
-          allowedMentions: noMentions,
-        });
-        app.store.put(i.guildId, 'announcement', message.id, {
-          actor: i.user.id,
-          channel: channel.id,
-        });
+        await publishAnnouncement(app, i.guildId, i.user.id, channel, title, text);
       }
       await reply(i, 'Announcement saved.');
     },
@@ -297,7 +292,7 @@ export const messages: Module = {
       }
       await reply(
         i,
-        'Sticky configuration updated. Messages are refreshed at most every five minutes when the channel is active.',
+        'Sticky updated. It reposts two minutes after the latest message, including bot posts.',
       );
     },
   },
@@ -320,7 +315,7 @@ export const messages: Module = {
       user: userReference,
       channel: channelReference,
     });
-    const card = announcementEmbed(title, text);
+    announcementEmbed(title, text);
     if (everyone) {
       await everyonePermission(app, i, channel);
       await confirm(
@@ -336,15 +331,11 @@ export const messages: Module = {
           channelReference,
           deliveryId: randomUUID().replaceAll('-', '').slice(0, 24),
         },
-        [card],
+        announcementPages(title, text).flatMap((page) => page.components),
       );
       return true;
     }
-    const message = await channel.send({
-      embeds: [card],
-      allowedMentions: noMentions,
-    });
-    app.store.put(i.guildId, 'announcement', message.id, { actor: i.user.id, channel: channel.id });
+    await publishAnnouncement(app, i.guildId, i.user.id, channel, title, text);
     await reply(i, 'Announcement published.');
     return true;
   },
