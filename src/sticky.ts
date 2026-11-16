@@ -12,10 +12,18 @@ export interface Sticky {
   message?: string;
   nonce?: string;
   due?: number;
+  delay?: number;
   trigger?: string;
 }
-export const stickyDelay = 120000;
 const busy = new WeakMap<App, Set<string>>();
+
+function updateDelay(sticky: Sticky, delay: number) {
+  if (!sticky.due || sticky.delay === delay) return false;
+  // Older two-minute schedules did not record their delay. Preserve the last activity time.
+  sticky.due += delay - (sticky.delay ?? 120000);
+  sticky.delay = delay;
+  return true;
+}
 
 // Persist the deadline rather than holding an event or a timer for each channel.
 export async function refreshSticky(app: App, message: Message) {
@@ -34,7 +42,8 @@ export async function refreshSticky(app: App, message: Message) {
         app.store.get(message.guild.id, 'stickyPost', String(message.nonce))))
   )
     return;
-  sticky.due = Date.now() + stickyDelay;
+  sticky.delay = cfg.stickyDelayMinutes * 60000;
+  sticky.due = Date.now() + sticky.delay;
   sticky.trigger = message.id;
   app.store.put(message.guild.id, 'sticky', message.channelId, sticky);
 }
@@ -43,8 +52,10 @@ export async function stickyTick(app: App, now = Date.now()) {
   let active = busy.get(app);
   if (!active) busy.set(app, (active = new Set()));
   for (const entry of app.store.entries<Sticky>(app.guildId, 'sticky')) {
-    if (!entry.data.due || entry.data.due > now || active.has(entry.key)) continue;
     const cfg = app.store.config(app.guildId);
+    if (updateDelay(entry.data, cfg.stickyDelayMinutes * 60000))
+      app.store.put(app.guildId, 'sticky', entry.key, entry.data);
+    if (!entry.data.due || entry.data.due > now || active.has(entry.key)) continue;
     if (!cfg.modules.messages || cfg.excludedChannels.includes(entry.key)) continue;
     active.add(entry.key);
     try {
@@ -52,6 +63,15 @@ export async function stickyTick(app: App, now = Date.now()) {
       const sticky = app.store.get<Sticky>(app.guildId, 'sticky', entry.key);
       // A message or a settings change during the channel lookup starts a new wait.
       if (!sticky || sticky.due !== entry.data.due || sticky.trigger !== entry.data.trigger)
+        continue;
+      const currentConfig = app.store.config(app.guildId);
+      if (updateDelay(sticky, currentConfig.stickyDelayMinutes * 60000))
+        app.store.put(app.guildId, 'sticky', entry.key, sticky);
+      if (
+        !currentConfig.modules.messages ||
+        currentConfig.excludedChannels.includes(entry.key) ||
+        sticky.due! > now
+      )
         continue;
       const old = sticky.message;
       sticky.due = undefined;

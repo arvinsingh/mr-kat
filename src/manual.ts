@@ -22,6 +22,25 @@ interface Overview {
   notes: string[];
 }
 const overviews: Record<string, Overview> = {
+  roast: {
+    purpose:
+      'Post a random roast, choose your participation preference, or suggest a reusable line for public staff approval.',
+    examples: [
+      '/roast user member:@Friend',
+      '/roast me',
+      '/roast preferences',
+      '/roast add text:{target}, your game plan has a loading screen.',
+      '/roast setup',
+    ],
+    notes: [
+      'Enabled server-wide by default with the community module. Everyone is roastable, including staff and the owner; protected moderation roles do not exempt anyone. Disallow in preferences blocks both being roasted and roasting others. Staff cannot bypass it. Self-roasting remains available. Preferences are private and survive restarts/backups.',
+      'Results are lasting unboxed messages with a clickable target mention and no notification ping. One pool of 100 built-in lines plus approved custom lines; no intensity/style choices, paid API, message-history analysis or command cooldown. Recent choices are tracked per channel to reduce repetition. Roasting this bot uses a small self-roast pool.',
+      'Owner setup uses a private Components V2 panel: Enable/Disable, Server-wide/Selected channels, a channel picker and a public submission-board picker. Changes remain drafts until Save changes. Reload saved discards a draft; stale drafts cannot overwrite newer settings. Selected channels include their threads. Exclusions, logs, tickets and confession destinations are skipped. Both participants must be able to see the result, and the sender/bot need posting access.',
+      'Choose the existing suggestions channel as the public submission board if desired. /roast add accepts 1–300 characters and the optional {target} placeholder, without fixed Discord mentions or links. Suggestions show their author and Pending status publicly. Manage Messages plus the staff allowlist is required to Approve/Reject. A decision updates the same card to Approved/Rejected and removes both buttons. Repeated or simultaneous reviews cannot reverse the decision or send duplicate notifications. Failed card edits are repairable after restart/maintenance; saved decisions already make old controls inactive.',
+      'Only approved submissions enter the pool. The author receives an attempted result DM; blocked DMs do not undo review. Owner setup → Custom roasts can disable/re-enable approved lines and updates their public record. Approved/disabled lines, pending submissions and participation preferences persist; rejected submissions and delivery receipts follow retentionDays. Per-channel recent choices and expired setup panels are temporary.',
+      'At most 100 pending submissions total, 10 per member and 2,000 retained custom submissions. Duplicate text is rejected. These are queue/storage bounds, not waiting-period cooldowns. Help and settings never grant Discord permissions.',
+    ],
+  },
   logs: {
     purpose:
       'Create the private Bot Logs category and all missing log channels, including a separate DM inbox.',
@@ -192,7 +211,7 @@ const overviews: Record<string, Overview> = {
     notes: [
       'Without logs, opens a private feature selector with status counts, Previous/Next, Refresh and Setup steps. Checks effective channel overrides, channel types, role safety/hierarchy, configured destinations, module switches, jobs and backup metadata. Intentionally disabled features are marked off, not broken. Developer Portal toggles, actual DM delivery and arbitrary member-role combinations cannot all be proven automatically; the panel explains these limits.',
       'Owners can choose existing channels/roles through native pickers. Selecting a value opens a preview; only Confirm saves it. Changing a setting keeps unrelated concurrent changes, rejects a stale preview of the same setting, rechecks current permissions and leaves a lasting admin receipt. No channels/roles/permissions are created or granted. Staff can inspect with /diagnose but cannot use owner settings.',
-      'Pickers cover staff/self/join/verification roles, private logs, voice lobby/category/notices, support category, onboarding links, commands-channel link, starboard and heartbeat destinations. Choosing a destination does not silently enable a feature; follow its Setup steps. Confession mode/privacy must be chosen explicitly through /confession setup.',
+      'Pickers cover staff/self/join/verification roles, private logs, voice lobby/category/notices, support panel channel, onboarding links, commands-channel link, starboard and heartbeat destinations. Choosing a destination does not silently enable a feature; follow its Setup steps. Confession mode/privacy must be chosen explicitly through /confession setup.',
       'logs:#staff-bot-logs remains the direct owner shortcut and replaces ALL log destinations. The bot must have the needed channel permissions, @everyone must lack access, and ordinary member-role access must be removed. Use /config log for separate log categories. /setup without arguments only inspects and creates no change receipt.',
     ],
   },
@@ -203,12 +222,14 @@ const overviews: Record<string, Overview> = {
       '/config export',
       '/config module name:voice state:on',
       '/config set key:selfRoles value:["ROLE_ID"]',
+      '/config set key:stickyDelayMinutes value:5',
       '/config set key:mentionReplies value:{"enabled":true,"commandsChannel":"CHANNEL_ID"}',
     ],
     notes: [
       'Values for set must be valid JSON, including quotes around string IDs.',
       'set/import require confirmation. Exported IDs must exist in this server; bot authority is checked.',
       'staffRoles is an additional allowlist, not a source of Discord permissions.',
+      'stickyDelayMinutes is the server-wide sticky inactivity timer: 1–1440 whole minutes, default 10. Example: /config set key:stickyDelayMinutes value:5, then confirm. It applies to all stickies, including existing ones. Pending deadlines are recalculated from the last activity, not restarted when the setting changes.',
       'Mention replies default on with 36 built-in lines. Set mentionReplies to {"enabled":true,"commandsChannel":"CHANNEL_ID"} to add a normal text commands-channel destination, or {"enabled":false} to disable the feature. Replace CHANNEL_ID with its numeric ID and confirm. The messages module also controls this feature. A missing or inaccessible destination falls back to /help.',
       'Edit mentionReplies.responses through /config export/import or /config set: {"enabled":true,"commandsChannel":"CHANNEL_ID","responses":["Your first line","Your second line"]}. Supply 1–50 nonempty lines, at most 250 characters each. Omitted nested fields use defaults, so preserve the other values when replacing mentionReplies. Text is used literally; the bot adds the sender mention and help footer. Only the sender can be pinged. Consecutive responses differ when multiple distinct lines exist; this memory resets on restart.',
       'Owner setup: /config set key:staffRoles value:["MOD_ROLE_ID","ADMIN_ROLE_ID"], then confirm. Use actual numeric role IDs, not names. Include every trusted admin/mod role; an empty list allows anyone with the native permission. Non-owner administrators must also be listed. Set matching command visibility under Server Settings → Integrations → this bot. Keep mixed member commands such as voice/ticket available to members; restricted subcommands still enforce staff checks.',
@@ -352,8 +373,9 @@ const overviews: Record<string, Overview> = {
       '/ticket close reason:Resolved',
     ],
     notes: [
-      'The owner must configure ticketCategory and staffRoles first. Panels use integrated Discord Components V2 cards with text and buttons. Panel/claim/reopen/transcript are staff workflows; deletion additionally requires Manage Channels and confirmation.',
-      'SETUP: create a Discord category called Support Tickets and a public #support channel. As owner: /config set key:ticketCategory value:"CATEGORY_ID", confirm; /config set key:staffRoles value:["MOD_ROLE_ID","ADMIN_ROLE_ID"], confirm; /config module name:tickets state:on. Give the bot Manage Channels, Manage Roles (Manage Permissions), View Channel, Send Messages, Embed Links and Read Message History. Grant support staff Manage Messages and include their role in staffRoles. Then /ticket panel channel:#support title:Contact staff description:Open a private ticket for help. Test the button with an ordinary member.',
+      'Publish /ticket panel channel:#support to save the support channel. No category setup is required. Panels use integrated Discord Components V2 cards with text and buttons. Panel/claim/reopen/transcript are staff workflows; deletion additionally requires Manage Channels and confirmation.',
+      'SETUP: create a public #support text channel. As owner, configure staffRoles and enable tickets. Give the bot Manage Channels, Manage Roles (Manage Permissions), View Channel, Send Messages, Embed Links, Attach Files and Read Message History. Grant support staff Manage Messages and include their role in staffRoles. Then /ticket panel channel:#support title:Contact staff description:Open a private ticket for help. This saves supportChannel without creating a category yet. Test the button with an ordinary member.',
+      'The first ticket automatically creates or reuses Support Tickets. A previously configured ticketCategory remains compatible. Its last channel being deleted removes the managed category and clears its saved ID; later tickets recreate it. Closed ticket channels still count until deleted. Manual deletions clean up tracking, and startup/hourly maintenance repairs missed deletions. Categories containing unrelated channels, or also configured for voice/logs, are preserved. Failed Discord lookups never establish that a category is empty.',
       'Each ticket explicitly hides @everyone and allows only its creator, the bot and configured staff roles (Discord administrators can bypass this). If staffRoles is empty, ordinary staff roles will not be added to the ticket. There is no creation cooldown; one open ticket per member and 50 open tickets per server still apply.',
       'Claim assigns the current ticket to a staff member and posts a lasting Ticket claimed message inside that private channel, with their mention and time. Other staff may still help, but cannot claim over them. Repeated claims by the same person do not duplicate the notice. The ticket owner can close their ticket; closure hides it from its creator and staff can reopen it. Assignment is retained on reopen.',
       'Closing removes the creator’s channel access and attempts one DM containing Closed status, the original request, closing reason and a transcript (latest 1000 messages, at most 4 MB). Blocked/failed DMs and transcript failures are recorded for staff and do not undo closing. Staff transcript exports remain private. Attachment links can expire. Only staff can reopen; only closed channels can be deleted, with a fresh confirmation. Reopen/delete buttons survive bot restarts and recheck current permissions and ticket state. Closed channels expire under retention.',
@@ -421,7 +443,7 @@ const overviews: Record<string, Overview> = {
     purpose: 'Staff configure a persistent notice that is refreshed when a text channel is active.',
     examples: ['/sticky set text:Please read the channel rules', '/sticky remove'],
     notes: [
-      'Each new message, including bot posts, embeds and components, starts or restarts a two-minute wait. The sticky reposts after two quiet minutes; pending deadlines survive restart. The previous sticky is removed; sticky posts do not start another wait. With no new messages there is no repeated posting. /sticky remove cancels pending refreshes.',
+      'Each new message, including bot posts, embeds and components, starts or restarts the server-wide inactivity wait (default ten minutes). The owner changes it with /config set key:stickyDelayMinutes value:5 and confirms; accepts 1–1440 whole minutes. All existing and future stickies use that value. Pending deadlines survive restart and adjust from the last activity when the delay changes. The previous sticky is removed; sticky posts do not start another wait. With no new messages there is no repeated posting. /sticky remove cancels pending refreshes.',
     ],
   },
   poll: {
@@ -634,6 +656,10 @@ const overviews: Record<string, Overview> = {
 };
 
 const memberPaths = new Set([
+  'roast user',
+  'roast me',
+  'roast preferences',
+  'roast add',
   'warnings panel',
   'warnings list',
   'poll create',
@@ -656,6 +682,7 @@ const memberPaths = new Set([
   'voice panel',
 ]);
 const ownerPaths = new Set([
+  'roast setup',
   'logs setup',
   'suggest setup',
   'warnings configure',
@@ -672,6 +699,7 @@ const ownerPaths = new Set([
   'automod configure',
 ]);
 const memberRoots = new Set([
+  'roast',
   'warnings',
   'help',
   'man',

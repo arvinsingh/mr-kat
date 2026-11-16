@@ -17,6 +17,8 @@ import { databaseLock } from './database-lock.js';
 import { maintainBackups } from './backup-health.js';
 import { stopUwuReplacements } from './uwulock.js';
 import { stopUwuAuthorActions } from './modules/uwulock.js';
+import { reconcileRoastReviews } from './roast-reviews.js';
+import { reconcileTicketCategories } from './ticket-categories.js';
 
 // Prefer IPv4 when both address families are available.
 setDefaultResultOrder('ipv4first');
@@ -112,13 +114,15 @@ async function main() {
       if (cfg.modules.voice) await reconcileVoice(app, guild);
       await reconcileOnboarding(app);
       await reconcileConfessionControls(app);
+      await reconcileRoastReviews(app);
       const cutoff = Date.now() - cfg.retentionDays * 86400000;
       for (const item of store.entriesBefore<Ticket>(app.guildId, 'ticket', cutoff, 100))
         if (item.data.status === 'closed' && item.data.closedAt && item.data.closedAt < cutoff) {
-          const channel = await guild.channels.fetch(item.key);
+          const channel = await guild.channels.fetch(item.key).catch(missingChannel);
           if (channel) await channel.delete('Closed ticket retention expired');
           store.delete(app.guildId, 'ticket', item.key);
         }
+      await reconcileTicketCategories(app, guild);
       for (const item of store.entriesBefore<{ channel: string; created: number; kind: LogKind }>(
         app.guildId,
         'logMessage',

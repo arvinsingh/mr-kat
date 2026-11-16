@@ -288,6 +288,7 @@ export class Store {
         'commandReceipt',
         'dmReceipt',
         'suggestionAction',
+        'roastReceipt',
         'confession',
         'confessionAuthor',
         'confessionLink',
@@ -335,6 +336,8 @@ export class Store {
         'suggestCooldown',
         'dmCooldown',
         'stickyPost',
+        'roastRecent',
+        'roastPanel',
         'purgeDeletion',
       ])
         this.db
@@ -353,6 +356,11 @@ export class Store {
       this.db
         .prepare(
           "DELETE FROM entries WHERE guild=? AND kind='suggestion' AND json_extract(data,'$.state') IN ('declined','implemented') AND updated<?",
+        )
+        .run(guild, cutoff);
+      this.db
+        .prepare(
+          "DELETE FROM entries WHERE guild=? AND kind='roastSubmission' AND json_extract(data,'$.status')='rejected' AND updated<?",
         )
         .run(guild, cutoff);
       this.db

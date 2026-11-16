@@ -44,10 +44,10 @@ const settings: Record<string, Setting> = {
     topic: 'voice',
     types: [ChannelType.GuildText],
   },
-  ticketCategory: {
-    label: 'Private ticket category',
+  supportChannel: {
+    label: 'Support panel channel',
     topic: 'tickets',
-    types: [ChannelType.GuildCategory],
+    types: [ChannelType.GuildText],
   },
   welcomeChannel: {
     label: 'Join/exit message destination',
@@ -317,7 +317,7 @@ const steps: Record<HealthTopic, string> = {
   voice:
     'Create a voice lobby and category in Discord. Select them here, then check /voice status. /voice setup also configures them together. Grant Manage Channels, Manage Roles/Permissions and Move Members; check category overrides. Join the lobby to create a room. Instructions appear in native voice text chat.',
   tickets:
-    'Create a Support Tickets category and public #support. Select the category and staffRoles here. Staff need Manage Messages; the bot needs Manage Channels/Manage Roles and posting/history/attachment permissions. Run /ticket panel channel:#support. Test that ordinary members cannot see another person’s ticket.',
+    'Create a public #support text channel and select it here. Configure staffRoles; staff need Manage Messages. The bot needs Manage Channels/Manage Roles and posting/history/attachment permissions. Run /ticket panel channel:#support. Support Tickets is created on demand and removed when its last channel is deleted; closed tickets keep it until deletion. Test that ordinary members cannot see another person’s ticket.',
   onboarding:
     'Select join/exit, rules and introductions links. For native Channels & Roles use /onboarding setup roles_source:native. Public bot welcomes default off; welcome DMs and goodbye messages are independent. Use /onboarding preview before /onboarding setup welcome_dm:true. Join roles wait for native screening when configured.',
   confessions:

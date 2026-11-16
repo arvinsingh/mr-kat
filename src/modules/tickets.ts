@@ -14,7 +14,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import type { App, Module, Interaction, Component } from '../types.js';
 import { requirePermission, botPermission, enabled, safeRole } from '../permissions.js';
-import { assert, safe, safeMentions } from '../util.js';
+import { assert, safe, safeMentions, logError } from '../util.js';
 import { reply, embed, noMentions, confirm, type Confirmation } from '../ui.js';
 import { directMessage } from '../dm.js';
 import { ticketCard, ticketStateCard } from '../ticket-ui.js';
@@ -28,6 +28,12 @@ import { destination, send } from '../discord.js';
 import { channelNotice } from '../notices.js';
 import { revokeWarning } from '../warnings.js';
 import { channelLabel } from '../channel-label.js';
+import {
+  ensureTicketCategory,
+  withTicketCategoryLock,
+  reconcileTicketCategories,
+  ticketChannelDeleted,
+} from '../ticket-categories.js';
 export interface Ticket {
   owner: string;
   subject: string;
@@ -57,66 +63,74 @@ export async function openTicket(app: App, i: Interaction, subject: string, desc
   const key = `${i.guildId}:${i.user.id}`;
   assert(!opening.has(key), 'Your ticket is being created.');
   opening.add(key);
+  let categoryReady = false;
   try {
-    const cfg = app.store.config(i.guildId!);
-    assert(cfg.ticketCategory, 'The owner needs to configure ticketCategory first.');
-    assert(
-      !app.store
-        .entries<Ticket>(i.guildId!, 'ticket')
-        .some((t) => t.data.owner === i.user.id && t.data.status === 'open'),
-      'You already have an open ticket.',
-    );
-    assert(
-      app.store.entries<Ticket>(i.guildId!, 'ticket').filter((t) => t.data.status === 'open')
-        .length < 50,
-      'The open-ticket limit has been reached.',
-    );
-    await botPermission(i.guild!, [P.ManageChannels, P.ManageRoles]);
-    const category = await i.guild!.channels.fetch(cfg.ticketCategory);
-    assert(category?.type === ChannelType.GuildCategory, 'Ticket category is invalid.');
-    const channel = await i.guild!.channels.create({
-      name: `ticket-${i.user.username}`.slice(0, 90),
-      type: ChannelType.GuildText,
-      parent: category.id,
-      permissionOverwrites: [
-        { id: i.guildId!, deny: [P.ViewChannel] },
-        {
-          id: i.user.id,
-          allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AttachFiles],
-        },
-        {
-          id: app.client.user!.id,
-          allow: [
-            P.ViewChannel,
-            P.SendMessages,
-            P.ReadMessageHistory,
-            P.ManageChannels,
-            P.ManageRoles,
-            P.AttachFiles,
-            P.EmbedLinks,
-          ],
-        },
-        ...cfg.staffRoles.map((id) => ({
-          id,
-          allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory],
-        })),
-        { id: i.guild!.ownerId, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory] },
-      ],
-      reason: `Support request by ${i.user.id}`,
+    await withTicketCategoryLock(app, i.guild!, async () => {
+      const cfg = app.store.config(i.guildId!);
+      assert(
+        !app.store
+          .entries<Ticket>(i.guildId!, 'ticket')
+          .some((t) => t.data.owner === i.user.id && t.data.status === 'open'),
+        'You already have an open ticket.',
+      );
+      assert(
+        app.store.entries<Ticket>(i.guildId!, 'ticket').filter((t) => t.data.status === 'open')
+          .length < 50,
+        'The open-ticket limit has been reached.',
+      );
+      await botPermission(i.guild!, [P.ManageChannels, P.ManageRoles]);
+      const category = await ensureTicketCategory(app, i.guild!);
+      categoryReady = true;
+      const channel = await i.guild!.channels.create({
+        name: `ticket-${i.user.username}`.slice(0, 90),
+        type: ChannelType.GuildText,
+        parent: category.id,
+        permissionOverwrites: [
+          { id: i.guildId!, deny: [P.ViewChannel] },
+          {
+            id: i.user.id,
+            allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AttachFiles],
+          },
+          {
+            id: app.client.user!.id,
+            allow: [
+              P.ViewChannel,
+              P.SendMessages,
+              P.ReadMessageHistory,
+              P.ManageChannels,
+              P.ManageRoles,
+              P.AttachFiles,
+              P.EmbedLinks,
+            ],
+          },
+          ...cfg.staffRoles.map((id) => ({
+            id,
+            allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory],
+          })),
+          { id: i.guild!.ownerId, allow: [P.ViewChannel, P.SendMessages, P.ReadMessageHistory] },
+        ],
+        reason: `Support request by ${i.user.id}`,
+      });
+      app.store.put(i.guildId!, 'ticket', channel.id, {
+        owner: i.user.id,
+        subject,
+        ...(description ? { description } : {}),
+        status: 'open',
+        created: Date.now(),
+      } satisfies Ticket);
+      const ticket = app.store.get<Ticket>(i.guildId!, 'ticket', channel.id)!;
+      const controls = await updateTicketCard(app, i.guildId!, channel, ticket);
+      await reply(
+        i,
+        `Your private ticket is ready: ${channelLabel(channel.id, channel.name)}.${controls ? '' : ' The controls could not be confirmed; use /ticket commands inside it.'}`,
+      );
     });
-    app.store.put(i.guildId!, 'ticket', channel.id, {
-      owner: i.user.id,
-      subject,
-      ...(description ? { description } : {}),
-      status: 'open',
-      created: Date.now(),
-    } satisfies Ticket);
-    const ticket = app.store.get<Ticket>(i.guildId!, 'ticket', channel.id)!;
-    const controls = await updateTicketCard(app, i.guildId!, channel, ticket);
-    await reply(
-      i,
-      `Your private ticket is ready: ${channelLabel(channel.id, channel.name)}.${controls ? '' : ' The controls could not be confirmed; use /ticket commands inside it.'}`,
-    );
+  } catch (error) {
+    if (categoryReady)
+      await reconcileTicketCategories(app, i.guild!).catch((cleanupError) =>
+        logError('ticket category cleanup', cleanupError),
+      );
+    throw error;
   } finally {
     opening.delete(key);
   }
@@ -179,6 +193,9 @@ export async function deleteTicketChannel(app: App, i: Interaction, pending: Con
     await reply(i, 'Deletion approved. Deleting this closed ticket channel now.');
     await channel.delete('Closed support ticket deletion');
     app.store.delete(i.guildId!, 'ticket', channel.id);
+    await ticketChannelDeleted(app, channel).catch((error) =>
+      logError('ticket category cleanup', error),
+    );
     await app.audit(
       i.guildId!,
       'reports',
@@ -453,6 +470,7 @@ export const tickets: Module = {
       if (action === 'panel') {
         await requirePermission(app, i, P.ManageMessages);
         const channel = await destination(app, i, i.options.getChannel('channel', true).id);
+        assert(channel.type === ChannelType.GuildText, 'Choose a normal support text channel.');
         await sendModern(
           channel,
           ticketCard(
@@ -464,7 +482,13 @@ export const tickets: Module = {
             [{ action: 'open', label: 'Open a support ticket' }],
           ),
         );
-        await reply(i, 'Support panel published.');
+        const cfg = app.store.config(i.guildId);
+        cfg.supportChannel = channel.id;
+        app.store.setConfig(i.guildId, cfg, i.user.id);
+        await reply(
+          i,
+          'Support panel published. Ticket categories are created and cleaned up automatically.',
+        );
         return;
       }
       if (action === 'open') {

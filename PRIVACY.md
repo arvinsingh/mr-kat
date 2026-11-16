@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 14 November 2026
+Last updated: 15 November 2026
 
 Mr. Kat is self-hosted software, not a centrally operated bot service. Each installation's operator controls its application, host, database, backups, settings, and access. Contact your server's administrators for the operator's privacy arrangements and data requests. Publishing this repository does not give its maintainer access to your installation.
 
@@ -15,6 +15,7 @@ The bot receives Discord events and interactions for its configured server. Depe
 - Role assignments, onboarding progress, managed voice rooms, activity counters, polls, suggestions, and starboard records.
 - Message text and attachment references needed for logging, purge records, announcements, tags, text effects, and UwU replacements/editing.
 - Staff DM conversation mappings, message delivery receipts, and private-notification routing markers; suggestion authors, status updates, and discussion-thread references.
+- Roast participation preferences, public custom-roast submissions and author references, review decisions, delivery receipts, and recent channel choices used to reduce repeats.
 
 Message Content access lets the bot process readable server messages for enabled features. It does not publish every message to a log. Optional persistent message snapshots default off (`snapshotDays: 0`); enabling them retains content for edit/deletion logs. Configured log messages, ticket transcripts, confessions, and transformed posts may disclose content to people who can access their destination.
 
@@ -29,6 +30,8 @@ Automatic or staff-requested DMs may include welcome instructions, moderation/re
 When the operator configures the separate private DM inbox, ordinary outgoing DM text and delivery results are copied into a staff-only Discord thread for that user. Incoming member DMs and attachment links are forwarded to the same thread. Outgoing notices disclose that replies are shared with staff. Successful forwarding is silent. Staff use an explicit Reply button or command to send as the bot; other messages in staff threads remain internal. Existing conversations can continue after someone leaves the server. Only authorized staff should have access to the inbox.
 
 Confession notifications and personal reminders are excluded from the staff relay. Replies referencing those private notifications are not forwarded. The bot retains private-notification message markers to distinguish these references. An ordinary DM sent without a private-notification reference can reach staff; use the confession's own Reply controls for an anonymous response. Suggestion discussions are public to people with channel access and retain the original author's name after resolution.
+
+Roast participation preferences are private bot settings. Custom roast proposals, their authors, and approval/rejection status are public in the configured submission channel; submitted text is not anonymous. Approved text can be reused in roast messages. Review-result DMs do not identify the reviewing staff member. Opt-outs, pending submissions, and approved/disabled lines persist until cleared; rejected submissions and request receipts follow the configured retention period. Recent channel choices and setup panels are temporary. These records are included in database backups.
 
 ## Storage, recipients, and retention
 

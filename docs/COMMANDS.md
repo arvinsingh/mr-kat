@@ -42,6 +42,18 @@ Confirm/Cancel prompts disappear after an accepted selection. A fresh private ou
 
 Reading help does not grant access to restricted commands. Commands marked owner require the actual server owner; staff commands also require their native Discord permission and the configured staff-role allowlist.
 
+## Roasts
+
+`/roast user member:@Friend` posts one random roast in the current channel; `/roast me` roasts yourself. Everyone is allowed by default, including staff and the owner. `/roast preferences` opens private Allow/Disallow buttons. Disallow blocks both being roasted and roasting others; self-roasting is still allowed and staff cannot bypass preferences. Results are short unboxed messages with clickable mentions but no notification pings. There are 100 built-in lines, one random pool, no styles/intensities, no paid APIs and no command cooldowns.
+
+Owner: `/roast setup` opens a private Components V2 panel with an Enable/Disable button, Server-wide/Selected channels menu, native channel pickers and a public submission-board picker. Changes remain drafts until **Save changes**. Selected channels include their threads. Existing exclusions, logs, tickets and confession destinations are skipped; the target must be able to see the result. Built-in roasts work before setup. **Custom roasts** opens approved lines for disable/re-enable controls. Reload saved discards drafts; old drafts cannot overwrite newer settings.
+
+Use the existing suggestions channel as the submission board if desired. `/roast add text:YOUR_LINE` publishes a **Pending** proposal there with its author and Approve/Reject buttons. Text is limited to 300 characters; `{target}` inserts the selected member when used later. Fixed Discord mentions, links and duplicate lines are rejected. The board must be visible to @everyone with Read Message History; ordinary members do not need permission to post there through the command. Manage Messages in that board and the configured staff allowlist are required to review.
+
+Review updates the same public card to **Approved** or **Rejected**, keeps the submitter visible, and removes both buttons. Only approved lines enter the pool. Saved decisions prevent repeat/simultaneous clicks from reversing a decision; a failed edit leaves a pending card repair for startup/maintenance. An attempted result DM informs the author, and blocked DMs do not undo the decision. The owner can disable an approved line without deleting its public record.
+
+There can be 100 pending proposals total, 10 per member and 2,000 retained custom submissions. Preferences and approved/disabled lines persist through restarts/backups. Pending submissions persist until review; rejected records and request receipts follow `retentionDays`. Recent per-channel choices are temporary and reduce repeats. See `/help command:roast` for full usage.
+
 ## Suggestions board
 
 Owner: `/suggest setup channel:#suggestions`. Members use `/suggest create text:YOUR_IDEA` from any accessible command channel; every new suggestion goes to the configured board. The author’s name remains on the card after decisions. Existing suggestions stay where they were posted.
@@ -56,7 +68,7 @@ Staff with Manage Server and the configured staff allowlist use the thread’s *
 
 ## Sticky notices
 
-`/sticky set text:NOTICE` keeps a notice near the bottom of the current channel. Each new message, including bot posts, components and embeds, restarts a two-minute wait. The sticky reposts after two quiet minutes. Previous sticky copies are removed, and sticky-generated gateway events are ignored to prevent loops. Pending deadlines survive a restart. `/sticky remove` stops future refreshes.
+`/sticky set text:NOTICE` keeps a notice near the bottom of the current channel. Each new message, including bot posts, components and embeds, restarts the server-wide inactivity wait (default ten minutes). The owner can change it with `/config set key:stickyDelayMinutes value:5`, then **Confirm**. Accepts 1–1440 whole minutes and applies to every existing and future sticky. Pending waits are recalculated from the last channel activity when this setting changes, including after restart. Previous sticky copies are removed, and sticky-generated gateway events are ignored to prevent loops. `/sticky remove` stops future refreshes.
 
 ## Text effects
 
@@ -145,11 +157,10 @@ For the native AutoMod permission failure, **Manage Server on the bot role** is 
 
 ## Configure the support system
 
-1. Create a Discord **category** called **Support Tickets** and a normal, member-visible **#support** text channel. Copy the category ID using Developer Mode. Keep staff operational discussion elsewhere.
-2. As owner, configure the category and staff roles, confirming each settings change:
+1. Create a normal, member-visible **#support** text channel. No category setup is required. Keep staff operational discussion elsewhere.
+2. As owner, configure staff roles, confirming the settings change:
 
 ```text
-/config set key:ticketCategory value:"CATEGORY_ID"
 /config set key:staffRoles value:["MOD_ROLE_ID","ADMIN_ROLE_ID"]
 /config module name:tickets state:on
 ```
@@ -162,10 +173,12 @@ Replace example IDs with your actual numeric IDs. Give the bot **Manage Channels
 /ticket panel channel:#support title:Contact staff description:Open a private ticket for help.
 ```
 
-4. Test **Open a support ticket** with an ordinary member. The integrated Discord Components V2 card keeps its text and button together. The button opens a private subject-and-description form. Submitting creates a channel in the configured category: @everyone is denied access, and the member, bot, server owner and configured staff roles are allowed. Discord administrators can still access private channels. An empty `staffRoles` list does not give ordinary staff roles access to tickets. Republish the panel after upgrading to replace an older panel's appearance.
+4. Publishing the panel saves `supportChannel`. Test **Open a support ticket** with an ordinary member. The integrated Discord Components V2 card keeps its text and button together. The button opens a private subject-and-description form. The first ticket automatically creates or reuses **Support Tickets**; an existing configured `ticketCategory` remains compatible. Each ticket channel denies @everyone access and permits the member, bot, server owner and configured staff roles. Discord administrators can still access private channels. An empty `staffRoles` list does not give ordinary staff roles access to tickets. Republish an older panel to save its support destination.
 5. Staff use **Claim** or `/ticket claim`, chat in the private channel, then `/ticket close reason:Resolved`. The creator can close their own ticket too. Closure hides the channel from its creator and changes the ticket card to **Reopen (staff)**, **Transcript (staff)** and **Delete channel (staff)**. Only staff can reopen. Deletion requires Manage Messages, Manage Channels and confirmation; reopened/changed tickets invalidate old deletion prompts. Closed channels follow `retentionDays`. One open ticket per member, 50 per server; there is no creation cooldown.
 
 On closure the bot attempts one DM containing **Status: Closed**, the original support request, the closing reason and a text transcript of up to the latest 1,000 accessible messages (4 MB limit). Attachment links are references and may expire. A blocked DM, failed export or unavailable control card does not undo closure: staff receive a delivery result and can still use slash commands. The member needs server DMs enabled. Staff transcript exports remain private. The closure DM does not identify who closed the ticket.
+
+Deleting the last ticket channel removes the managed category automatically and clears its saved ID; the next ticket recreates it. Closing alone retains the channel and category for reopening. Manual deletions remove stale ticket tracking, while startup/hourly maintenance reconciles deletions missed offline. Unrelated channels inside the category and categories shared with configured voice/logs prevent automatic deletion. Temporary lookup failures never count as evidence that a category is empty.
 
 Claiming now posts a **normal, lasting message inside the private ticket** showing **Claimed by @Staff** and the claim time. The ticket creator and other staff can see who is handling it. Other staff retain access and may help, but cannot overwrite another person's claim; the error identifies the current claimant. Repeated claims by the same person do not duplicate the notice. Reopening keeps the assignment. If notice delivery fails, the assignment remains saved and the bot reports the delivery problem.
 
@@ -430,7 +443,7 @@ Tags are clickable references, while notification pings remain disabled in the o
 
 ### Easter egg
 
-Anyone can use `/easteregg` in a channel where they and the bot can post. It publishes the server's surprise text, with the footer **Mr. Kat · Curiosity rewarded**. There is no command cooldown and mentions do not ping. The community module must be enabled.
+Anyone can use `/easteregg` in a channel where they and the bot can post. It publishes the server's surprise text, with the fixed footer **Mr. Kat**. There is no command cooldown and mentions do not ping. The community module must be enabled.
 
 The server owner can edit the text without changing code:
 
@@ -438,7 +451,7 @@ The server owner can edit the text without changing code:
 /config set key:easterEggText value:"Your interesting message goes here."
 ```
 
-Confirm the configuration change. The creator credit stays fixed when the text changes.
+Confirm the configuration change. The Mr. Kat footer stays fixed when the text changes.
 
 ### Message colors
 
@@ -474,6 +487,7 @@ The last person leaving a managed room triggers deletion of that room and its bu
 | `/confess`                                   | Private confession form; reviewed or immediate publication                                                               | Members, after owner setup                                                                                 |
 | `/confess-notifications`                     | Enable/mute reply DMs for a root confession                                                                              | Published contributors and native thread members                                                           |
 | `/say`                                       | Plain bot-authored channel post or multiline composer                                                                    | Manage Messages + destination access + staff allowlist                                                     |
+| `/roast`                                     | user, me, preferences, add, setup                                                                                        | Members; setup/custom library: owner; proposal review: Manage Messages + staff allowlist                   |
 | `/mentionguard`                              | setup, status, disable; non-deleting support redirects and repeated-ping alerts                                          | Setup/disable: owner; status: Manage Server + allowlist                                                    |
 | Message menu → Apps → Moderate with evidence | Private Warn/Kick/Ban picker using the selected message                                                                  | Action-specific moderation permission + staff allowlist                                                    |
 | `/dm`                                        | send, reply, template, templates, from-template                                                                          | Manage Server + allowlist; send/from-template require confirmation; reply uses a staff conversation thread |
@@ -481,7 +495,7 @@ The last person leaving a managed room triggers deletion of that room and its bu
 | `/onboarding`                                | setup, message, autoroles, preview, status                                                                               | Server owner                                                                                               |
 | `/heartbeat`                                 | setup, status, disable                                                                                                   | Setup/disable: owner; status: Manage Server + staff allowlist                                              |
 | `/starboard`                                 | setup, status, refresh, disable                                                                                          | Setup/disable: owner; status/refresh: Manage Messages + allowlist                                          |
-| `/easteregg`                                 | Public custom surprise with creator credit                                                                               | Members; text configuration: server owner                                                                  |
+| `/easteregg`                                 | Public custom surprise with Mr. Kat footer                                                                               | Members; text configuration: server owner                                                                  |
 | `/text`                                      | Nine text effects, reply shortcuts and Apps → Transform text                                                             | Members who can post; existing messages also require Read Message History                                  |
 | `/confession`                                | setup, mode, status, list, review, thread, close, reopen, remove                                                         | Manage Messages + allowlist; setup/mode: server owner; no author lookup                                    |
 | `/setup`                                     | Interactive guided setup and owner channel/role pickers; direct private-log shortcut                                     | Owner                                                                                                      |

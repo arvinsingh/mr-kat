@@ -91,6 +91,9 @@ const groups: Record<ResponsePolicy, string[]> = {
     'panic off',
   ],
   published: [
+    'roast user',
+    'roast me',
+    'roast add',
     'text uwuify',
     'text emojify',
     'text faces',
@@ -115,6 +118,8 @@ const groups: Record<ResponsePolicy, string[]> = {
     'announce everyone',
   ],
   private: [
+    'roast preferences',
+    'roast setup',
     'logs status',
     'warnings panel',
     'warnings list',

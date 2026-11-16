@@ -8,8 +8,10 @@ import { textChannel } from '../discord.js';
 import type { ChangeReceipt } from '../change-receipts.js';
 import { setupPanel, validateSelection } from './setup.js';
 import type { HealthTopic } from '../setup-health.js';
+import { validateRoastConfig } from '../roast-setup.js';
 
 export async function validateConfig(app: App, i: Interaction, cfg: GuildConfig): Promise<void> {
+  await validateRoastConfig(app, cfg.roast);
   assert(
     !cfg.logs.dm ||
       !Object.entries(cfg.logs).some(([kind, id]) => kind !== 'dm' && id === cfg.logs.dm),
@@ -64,6 +66,7 @@ export async function validateConfig(app: App, i: Interaction, cfg: GuildConfig)
       cfg.logsCategory,
       cfg.mentionReplies.commandsChannel,
       cfg.ticketCategory,
+      cfg.supportChannel,
       cfg.voiceCategory,
       cfg.voiceLobby,
       cfg.voiceNoticeChannel,
@@ -82,6 +85,11 @@ export async function validateConfig(app: App, i: Interaction, cfg: GuildConfig)
       (await i.guild!.channels.fetch(category!))?.type === 4,
       'Ticket, voice and log categories must be categories.',
     );
+  if (cfg.supportChannel) {
+    const support = await textChannel(app, i.guildId!, cfg.supportChannel);
+    assert(support.type === 0, 'Support panels require a normal text channel.');
+    await botPermission(i.guild!, [P.SendMessages, P.EmbedLinks], support);
+  }
   if (cfg.welcomeChannel) {
     const welcome = await textChannel(app, i.guildId!, cfg.welcomeChannel);
     await botPermission(
@@ -282,7 +290,7 @@ export const admin: Module = {
       app.store.setConfig(i.guildId, cfg, i.user.id);
       await reply(
         i,
-        'Log destinations saved. Keep this channel staff-only. Next: /diagnose, then /config export. Set staffRoles, protectedRoles, selfRoles, ticketCategory, verifiedRole, and voice settings as needed. Message content storage is off until snapshotDays is set above 0.',
+        'Log destinations saved. Keep this channel staff-only. Next: /diagnose, then /config export. Set staffRoles, protectedRoles, selfRoles, verifiedRole and voice settings as needed. Publish /ticket panel channel:#support; ticket categories are automatic. Message content storage is off until snapshotDays is set above 0.',
       );
     },
     status: async (app, i) => {

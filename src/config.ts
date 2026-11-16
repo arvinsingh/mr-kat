@@ -43,6 +43,7 @@ export const configSchema = z
     protectedRoles: z.array(id).max(25).default([]),
     staffRoles: z.array(id).max(10).default([]),
     excludedChannels: z.array(id).max(100).default([]),
+    stickyDelayMinutes: z.number().int().min(1).max(1440).default(10),
     selfRoles: z.array(id).max(25).default([]),
     restoreRoles: z.array(id).max(25).default([]),
     rolePrerequisites: z.record(id, id).default({}),
@@ -70,6 +71,13 @@ export const configSchema = z
     introductionChannel: id.optional(),
     suggestionChannel: id.optional(),
     logsCategory: id.optional(),
+    roast: z
+      .object({
+        enabled: z.boolean().default(true),
+        channels: z.array(id).max(25).default([]),
+        reviewChannel: id.optional(),
+      })
+      .default(() => ({ enabled: true, channels: [] })),
     textEffects: z
       .object({
         enabled: z.boolean().default(true),
@@ -132,6 +140,7 @@ export const configSchema = z
     warningAction: z.enum(['none', 'timeout', 'kick']).default('timeout'),
     warningTimeoutMinutes: z.number().int().min(1).max(1440).default(10),
     ticketCategory: id.optional(),
+    supportChannel: id.optional(),
     voiceLobby: id.optional(),
     voiceCategory: id.optional(),
     // Read legacy exports, but use Discord's built-in voice text chat for new rooms.

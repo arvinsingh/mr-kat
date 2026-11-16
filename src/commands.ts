@@ -666,6 +666,18 @@ export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
       s('reason', 'Decision reason', true),
     ]),
   ]),
+  root('roast', 'Roast a member, manage your preferences or suggest a line', [
+    sub('user', 'Roast another server member', [u()]),
+    sub('me', 'Roast yourself'),
+    sub('preferences', 'Allow or disallow roasts in both directions'),
+    sub('add', 'Suggest a roast for public staff review', [
+      {
+        ...s('text', 'Reusable roast; {target} inserts the selected member', true),
+        max_length: 300,
+      },
+    ]),
+    sub('setup', 'Owner: configure roast channels, submissions and custom lines'),
+  ]),
   root(
     'logs',
     'Create or inspect private bot log channels',

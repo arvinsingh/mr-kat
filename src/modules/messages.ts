@@ -281,19 +281,21 @@ export const messages: Module = {
       enabled(app, i.guildId, 'messages');
       assert(i.channel, 'Channel missing.');
       await requirePermission(app, i, P.ManageMessages, i.channel);
-      if (i.options.getSubcommand() === 'remove')
+      if (i.options.getSubcommand() === 'remove') {
         app.store.delete(i.guildId, 'sticky', i.channelId);
-      else {
+        await reply(i, 'Sticky removed.');
+      } else {
         await destination(app, i, i.channelId);
         app.store.put(i.guildId, 'sticky', i.channelId, {
           text: i.options.getString('text', true),
           last: 0,
         });
+        const minutes = app.store.config(i.guildId).stickyDelayMinutes;
+        await reply(
+          i,
+          `Sticky updated. It reposts after ${minutes} quiet ${minutes === 1 ? 'minute' : 'minutes'}, including after bot posts.`,
+        );
       }
-      await reply(
-        i,
-        'Sticky updated. It reposts two minutes after the latest message, including bot posts.',
-      );
     },
   },
   component: async (app, i) => {

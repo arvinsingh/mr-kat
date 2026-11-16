@@ -41,10 +41,12 @@ import { channelNotice } from './notices.js';
 import { reply, takeConfirmation, dismissPrompt, publicResponse, type Confirmation } from './ui.js';
 import { responsePath, responsePolicies, confirmationPaths } from './response-policy.js';
 import { recordChange } from './change-receipts.js';
+import { roast } from './modules/roast.js';
 import { assert, UserError, errorText, logError } from './util.js';
 import { enabled, manageableRole, requirePermission, botPermission } from './permissions.js';
 
 const features: Module[] = [
+  roast,
   suggestions,
   logs,
   dmConversations,
@@ -272,7 +274,7 @@ export async function route(app: App, raw: DiscordInteraction) {
         ((raw.isButton() || raw.isStringSelectMenu?.()) && raw.customId.startsWith('help:')) ||
         (raw.isStringSelectMenu?.() && raw.customId.startsWith('textEffect:')) ||
         ((raw.isButton() || raw.isAnySelectMenu?.()) &&
-          /^(health|backup|uwuPanel):/.test(raw.customId)) ||
+          /^(health|backup|uwuPanel|roastSetup|roastPrefs):/.test(raw.customId)) ||
         ((raw.isButton() || raw.isAnySelectMenu?.()) &&
           raw.customId.startsWith('warnings:') &&
           !raw.customId.startsWith('warnings:apply:')) ||

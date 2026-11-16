@@ -292,10 +292,15 @@ export async function checkSetup(
     if (!disabled('tickets')) {
       needed('Private ticket channels', [P.ManageChannels, P.ManageRoles]);
       await channel(
-        'Support category',
-        cfg.ticketCategory,
-        [ChannelType.GuildCategory],
-        [...posting, P.ManageChannels, P.ManageRoles, P.AttachFiles, P.ReadMessageHistory],
+        'Support panel channel',
+        cfg.supportChannel,
+        [ChannelType.GuildText],
+        [...posting, P.ReadMessageHistory],
+      );
+      add(
+        'ok',
+        'Ticket category lifecycle',
+        'Support Tickets is created on demand and removed after its last channel is deleted. Closed channels retain it. No category setup is required.',
       );
       add(
         cfg.staffRoles.length ? 'ok' : 'warn',
@@ -307,7 +312,7 @@ export async function checkSetup(
       add(
         'warn',
         'Publish support panel',
-        'After configuring the category, run /ticket panel channel:#support. This check does not infer whether an old panel was deleted.',
+        'Run /ticket panel channel:#support to publish the panel and save its destination. This check does not infer whether an old panel was deleted.',
       );
     }
   } else if (topic === 'onboarding') {
@@ -375,6 +380,34 @@ export async function checkSetup(
     }
   } else if (topic === 'community') {
     if (!disabled('community')) {
+      add(
+        cfg.roast.enabled ? 'ok' : 'off',
+        'Roasts',
+        `${cfg.roast.enabled ? 'Enabled' : 'Disabled'} · ${cfg.roast.channels.length ? `${cfg.roast.channels.length} selected channels and their threads` : 'Server-wide'}. Everyone participates by default; opt-out blocks both directions. Configure with /roast setup.`,
+      );
+      if (cfg.roast.reviewChannel) {
+        await channel(
+          'Public roast submission board',
+          cfg.roast.reviewChannel,
+          [ChannelType.GuildText],
+          [...posting, P.ReadMessageHistory],
+        );
+        const board = await guild.channels.fetch(cfg.roast.reviewChannel).catch(() => null);
+        if (
+          board &&
+          !board.permissionsFor(guild.roles.everyone)?.has([P.ViewChannel, P.ReadMessageHistory])
+        )
+          add(
+            'error',
+            'Roast board visibility',
+            'Choose a public text channel so members can see proposals and their decisions.',
+          );
+      } else
+        add(
+          'warn',
+          'Roast submissions',
+          'Built-in roasts work without a submission board. Select a public board in /roast setup to accept custom lines.',
+        );
       if (cfg.suggestionChannel)
         await channel(
           'Suggestions destination',

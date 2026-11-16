@@ -1,5 +1,6 @@
 import { incomingDM } from './dm-conversations.js';
 import { refreshSticky } from './sticky.js';
+import { ticketChannelDeleted } from './ticket-categories.js';
 import { roleMentionReply } from './role-mentions.js';
 import { memberAvatarChanged, userAvatarChanged } from './member-logs.js';
 import {
@@ -223,6 +224,8 @@ export function events(app: App) {
       );
   });
   app.client.on(Events.ChannelDelete, (channel) => {
+    if (!channel.isDMBased() && channel.guild.id === app.guildId)
+      run('ticket channel deleted', () => ticketChannelDeleted(app, channel));
     if (!channel.isDMBased() && channel.guild.id === app.guildId)
       run('starboard channel deleted', () => starboardChannelChanged(app, channel.id, true));
     if (!channel.isDMBased() && channel.guild.id === app.guildId)
