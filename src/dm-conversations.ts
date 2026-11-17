@@ -1,9 +1,6 @@
 import {
   ChannelType,
   PermissionFlagsBits as P,
-  ContainerBuilder,
-  SectionBuilder,
-  TextDisplayBuilder,
   ButtonBuilder,
   ButtonStyle,
   ModalBuilder,
@@ -19,23 +16,14 @@ import { sendModern, displayText, modernModal } from './presentation.js';
 import { noMentions, reply } from './ui.js';
 import { requirePermission, botPermission } from './permissions.js';
 import { directMessage, type Delivery } from './dm.js';
+import { serial } from './concurrency.js';
+import { sendLog, logText } from './log-format.js';
+import { logProfile } from './log-profile.js';
 
 interface Conversation {
   user: string;
   channel: string;
   thread: string;
-}
-const pending = new WeakMap<App, Map<string, Promise<unknown>>>();
-async function serial<T>(app: App, user: string, run: () => Promise<T>): Promise<T> {
-  let queues = pending.get(app);
-  if (!queues) pending.set(app, (queues = new Map()));
-  const next = (queues.get(user) ?? Promise.resolve()).catch(() => undefined).then(run);
-  queues.set(user, next);
-  try {
-    return await next;
-  } finally {
-    if (queues.get(user) === next) queues.delete(user);
-  }
 }
 async function conversation(app: App, user: string) {
   const cfg = app.store.config(app.guildId);
@@ -56,7 +44,13 @@ async function conversation(app: App, user: string) {
   }
   await botPermission(
     channel.guild,
-    [P.SendMessages, P.ReadMessageHistory, P.CreatePublicThreads, P.SendMessagesInThreads],
+    [
+      P.SendMessages,
+      P.EmbedLinks,
+      P.ReadMessageHistory,
+      P.CreatePublicThreads,
+      P.SendMessagesInThreads,
+    ],
     channel,
   );
   const current = app.store.get<Conversation>(app.guildId, 'dmConversation', user);
@@ -86,25 +80,23 @@ async function conversation(app: App, user: string) {
   const record = { user, channel: channel.id, thread: thread.id };
   app.store.put(app.guildId, 'dmConversation', user, record);
   app.store.put(app.guildId, 'dmThread', thread.id, record);
-  await sendModern(thread, {
-    components: [
-      new ContainerBuilder().addSectionComponents(
-        new SectionBuilder()
-          .addTextDisplayComponents(
-            new TextDisplayBuilder().setContent(
-              `## DM conversation\n<@${user}> · ${safe(recipient.username, 100)}\nUse Reply or /dm reply. Other thread messages stay internal.`,
-            ),
-          )
-          .setButtonAccessory(
-            new ButtonBuilder()
-              .setCustomId(`dm:reply:${thread.id}`)
-              .setLabel('Reply')
-              .setStyle(ButtonStyle.Primary),
-          ),
-      ),
-    ],
-    allowedMentions: noMentions,
-  });
+  await sendLog(
+    thread,
+    'dm',
+    'DM conversation',
+    'Use Reply or /dm reply. Other thread messages stay internal.',
+    {
+      profile: logProfile(app, user, undefined, recipient),
+      controls: [
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`dm:reply:${thread.id}`)
+            .setLabel('Reply')
+            .setStyle(ButtonStyle.Primary),
+        ),
+      ],
+    },
+  );
   return thread;
 }
 export async function logOutgoingDM(
@@ -116,12 +108,15 @@ export async function logOutgoingDM(
   attachments: string[],
 ) {
   if (!app.guildId || !app.store.config(app.guildId).logs.dm) return;
-  await serial(app, user, async () => {
+  await serial(app, `dm:${user}`, async () => {
     const thread = await conversation(app, user);
-    await sendModern(thread, {
-      content: `## Bot → member · ${delivery}\n**${safe(title, 256)}**\n${text}${attachments.length ? `\n\nAttachments: ${attachments.map((name) => safe(name, 120)).join(', ')}` : ''}`,
-      allowedMentions: noMentions,
-    });
+    await sendLog(
+      thread,
+      'dm',
+      `Bot → member · ${delivery}`,
+      `**${safe(title, 256)}**\n${logText(text)}${attachments.length ? `\n\nAttachments: ${attachments.map((name) => safe(name, 120)).join(', ')}` : ''}`,
+      { profile: logProfile(app, user) },
+    );
   });
 }
 export async function incomingDM(app: App, message: Message) {
@@ -139,7 +134,7 @@ export async function incomingDM(app: App, message: Message) {
     });
     return true;
   }
-  await serial(app, message.author.id, async () => {
+  await serial(app, `dm:${message.author.id}`, async () => {
     if (app.store.get(app.guildId, 'dmReceipt', message.id)) return;
     const known = app.store.get<Conversation>(app.guildId, 'dmConversation', message.author.id);
     if (!known) {
@@ -162,10 +157,16 @@ export async function incomingDM(app: App, message: Message) {
       const attachments = [...message.attachments.values()]
         .map((a) => `[${safe(a.name, 100)}](${a.url})`)
         .join('\n');
-      await sendModern(thread, {
-        content: `## Member → staff\n**${safe(message.author.username, 100)}** · <@${message.author.id}>\n${message.content || displayText(message) || '[No text]'}${attachments ? '\n\n' + attachments : ''}`,
-        allowedMentions: noMentions,
-      });
+      await sendLog(
+        thread,
+        'dm',
+        'Member → staff',
+        `${logText(message.content || displayText(message) || '[No text]')}${attachments ? '\n\n' + attachments : ''}`,
+        {
+          profile: logProfile(app, message.author.id, undefined, message.author),
+          at: message.createdTimestamp,
+        },
+      );
     } catch {
       app.store.put(app.guildId, 'dmReceipt', message.id, {
         state: 'uncertain',

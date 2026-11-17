@@ -18,6 +18,9 @@ const groups: Record<ResponsePolicy, string[]> = {
     'sticky remove',
   ],
   staff: [
+    'honeypot setup',
+    'honeypot disable',
+    'honeypot release',
     'logs setup',
     'suggest setup',
     'dm reply',
@@ -118,6 +121,7 @@ const groups: Record<ResponsePolicy, string[]> = {
     'announce everyone',
   ],
   private: [
+    'honeypot status',
     'roast preferences',
     'roast setup',
     'logs status',
@@ -180,6 +184,7 @@ export const responsePolicies = Object.fromEntries(
   Object.entries(groups).flatMap(([policy, paths]) => paths.map((path) => [path, policy])),
 ) as Record<string, ResponsePolicy>;
 export function responsePath(i: Interaction): string {
+  if (i.isButton?.() && i.customId.startsWith('honeypot:release:')) return 'honeypot release';
   if (i.isModalSubmit?.() && i.customId.startsWith('suggestion:review:')) return 'suggest status';
   if (i.isModalSubmit?.() && i.customId.startsWith('dm:reply:')) return 'dm reply';
   if ((i.isModalSubmit?.() || i.isUserSelectMenu?.()) && i.customId.startsWith('voice:'))

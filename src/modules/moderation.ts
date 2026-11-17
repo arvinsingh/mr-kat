@@ -1,4 +1,5 @@
 import { sendModern, updatedControls } from '../presentation.js';
+import { logProfile } from '../log-profile.js';
 import {
   AttachmentBuilder,
   PermissionFlagsBits as P,
@@ -7,7 +8,7 @@ import {
   ButtonStyle,
 } from 'discord.js';
 import { randomUUID } from 'node:crypto';
-import type { App, Command, Module, Interaction } from '../types.js';
+import type { App, Module, Interaction, Component, LogProfile } from '../types.js';
 import {
   enabled,
   manageableMember,
@@ -15,15 +16,21 @@ import {
   botPermission,
   checkHierarchy,
 } from '../permissions.js';
-import { assert, duration, safe, safeMentions, parseIds } from '../util.js';
+import { assert, duration, safe, safeMentions, parseIds, errorText } from '../util.js';
 import { confirm, embed, reply, noMentions, type Confirmation } from '../ui.js';
 import { id } from '../config.js';
 import { textChannel } from '../discord.js';
 import { moderationNotice } from '../dm.js';
 import { channelNotice } from '../notices.js';
+import { parseRemovalRequest, type RemovalRequest } from '../moderation-request.js';
+import { parseBatchNicknames } from '../batch-request.js';
+import { startModerationEvent, completeModerationEvent } from '../moderation-events.js';
+import { caseDelivery, type CaseLog } from '../case-log.js';
+import type { Delivery } from '../dm.js';
 import {
   resolveEvidence,
   evidenceText,
+  evidenceSummary,
   evidenceChannelAccess,
   type MessageEvidence,
 } from '../evidence.js';
@@ -36,7 +43,7 @@ import {
 
 interface Approval {
   actor: string;
-  payload: Record<string, unknown>;
+  payload: RemovalRequest;
   expires: number;
   channel: string;
   message: string;
@@ -44,18 +51,13 @@ interface Approval {
 async function executeModeration(
   app: App,
   i: Interaction,
-  payload: Record<string, unknown>,
+  payload: RemovalRequest,
   originalActor?: string,
 ) {
   enabled(app, i.guildId!, 'moderation');
-  const { target, reason, action, expires } = payload as {
-    target: string;
-    reason: string;
-    action: string;
-    expires?: number;
-  };
+  const { target, reason, action, expires } = payload;
   const permission = action === 'ban' ? P.BanMembers : P.KickMembers;
-  const trigger = payload.warningTrigger as WarningTrigger | undefined;
+  const trigger = payload.warningTrigger;
   const actorPermission = trigger && !originalActor ? P.ModerateMembers : permission;
   const authorize = async () => {
     const member = await manageableMember(app, i, target, actorPermission);
@@ -88,7 +90,7 @@ async function executeModeration(
     checkHierarchy(actor, member, me, i.guild!.ownerId, cfg.protectedRoles);
   };
   await checkRequester();
-  const evidence = payload.evidence as MessageEvidence | undefined;
+  const evidence = payload.evidence;
   if (evidence) {
     await evidenceChannelAccess(app, i, evidence.channel);
     if (originalActor) await evidenceChannelAccess(app, i, evidence.channel, originalActor);
@@ -101,27 +103,41 @@ async function executeModeration(
     `${action} approved`,
     reason,
     `${expires ? `Duration: ${Math.ceil(expires / 60000)} minutes.\n` : ''}Removal will be attempted next. If it succeeds, contact server staff outside the server for an appeal.`,
+    false,
   );
   // A DM can take time; recheck authority before removing the member.
-  enabled(app, i.guildId!, 'moderation');
-  member = await authorize();
-  await checkRequester();
-  if (trigger) validateWarningKick(app, i.guildId!, target, trigger);
-  if (action === 'kick') await member.kick(reason);
-  else {
-    const marker = randomUUID(),
-      banReason = `${reason.slice(0, 350)} [mr-kat:${marker}]`;
-    if (expires) {
-      app.store.put(i.guildId!, 'banGeneration', target, { marker, reason: banReason });
-      app.store.job(
-        i.guildId!,
-        originalActor ?? i.user.id,
-        'unban',
-        { target, marker, reason: banReason },
-        Date.now() + expires,
-      );
+  let eventToken: string | undefined;
+  try {
+    enabled(app, i.guildId!, 'moderation');
+    member = await authorize();
+    await checkRequester();
+    if (trigger) validateWarningKick(app, i.guildId!, target, trigger);
+    eventToken = startModerationEvent(app, target, action);
+    if (action === 'kick') await member.kick(`${reason.slice(0, 350)} [mr-kat:${eventToken}]`);
+    else {
+      const marker = eventToken,
+        banReason = `${reason.slice(0, 350)} [mr-kat:${marker}]`;
+      if (expires) {
+        app.store.put(i.guildId!, 'banGeneration', target, { marker, reason: banReason });
+        app.store.job(
+          i.guildId!,
+          originalActor ?? i.user.id,
+          'unban',
+          { target, marker, reason: banReason },
+          Date.now() + expires,
+        );
+      }
+      await member.ban({ reason: banReason });
     }
-    await member.ban({ reason: banReason });
+  } catch (error) {
+    await app.audit(
+      app.guildId,
+      'moderation',
+      'Moderation action not confirmed',
+      `Staff: <@${i.user.id}>\nRequested action: ${action}\nMember DM: ${delivery}\n${safeMentions(errorText(error))}\nCheck the member before retrying. No automatic replay.`,
+      { force: true, profile: logProfile(app, target) },
+    );
+    throw error;
   }
   const caseId = await record(
     app,
@@ -130,8 +146,15 @@ async function executeModeration(
     action,
     reason,
     String(payload.originChannel ?? i.channelId),
-    payload.evidence as MessageEvidence | undefined,
+    payload.evidence,
     originalActor,
+    undefined,
+    {
+      delivery,
+      duration: expires ? `${Math.ceil(expires / 60000)} minutes` : undefined,
+      eventToken,
+      profile: logProfile(app, target, member),
+    },
   );
   if (trigger)
     app.store.put(i.guildId!, 'warningEscalation', String(trigger.caseId), {
@@ -155,26 +178,40 @@ async function record(
   evidence?: MessageEvidence,
   requester?: string,
   warningExpires?: number,
+  context?: {
+    delivery: Delivery | 'pending';
+    duration?: string;
+    eventToken?: string;
+    profile?: LogProfile;
+  },
 ) {
   const caseId = app.store.addCase(i.guildId!, i.user.id, target, action, reason);
+  if (context?.eventToken) completeModerationEvent(app, context.eventToken, caseId);
   if (action === 'warn' && warningExpires)
     app.store.put(i.guildId!, 'warningExpiry', String(caseId), { expires: warningExpires });
   if (evidence)
     app.store.put(i.guildId!, 'caseEvidence', String(caseId), { actor: i.user.id, evidence });
   app.store.count(i.guildId!, 'moderation');
-  await app.audit(
+  const url = await app.audit(
     i.guildId!,
     'moderation',
     `Case #${caseId}: ${action}`,
-    `Member: <@${target}>\nStaff: <@${i.user.id}>\nReason: ${safeMentions(reason || 'No reason supplied.')}${requester ? `\nRequested by: <@${requester}> · Approved by: <@${i.user.id}>` : ''}${evidence ? `\n${evidenceText(evidence)}` : ''}`,
+    `${requester ? `Requested by: <@${requester}> · Approved by: <@${i.user.id}>` : `Staff: <@${i.user.id}>`}${context?.duration ? `\nDuration: ${context.duration}` : ''}${action === 'warn' ? `\nActive warnings: ${warningHistory(app, i.guildId!, target).active.length}` : ''}${context ? `\nMember DM: ${context.delivery}` : ''}\nReason: ${safeMentions(reason || 'No reason supplied.')}${evidence ? `\n---\n${evidenceSummary(evidence)}` : ''}`,
+    { profile: context?.profile ?? logProfile(app, target), dividers: true },
   );
+  if (context)
+    app.store.put(i.guildId!, 'caseLog', String(caseId), {
+      url: url || undefined,
+      delivery: context.delivery,
+      duration: context.duration,
+    } satisfies CaseLog);
   await channelNotice(
     app,
     i.guildId!,
     channel,
     'moderation',
     `Case #${caseId}: ${action}`,
-    `Member: <@${target}> (ID: ${target})\nTime: <t:${Math.floor(Date.now() / 1000)}:F>\nReason: ${safeMentions(reason || 'No reason supplied.')}`,
+    `Member: <@${target}>\nReason: ${safeMentions(reason || 'No reason supplied.')}${context?.duration ? `\nDuration: ${context.duration}` : ''}`,
   );
   return caseId;
 }
@@ -252,6 +289,11 @@ async function performModeration(
     evidence,
     undefined,
     action === 'warn' && expiry ? Date.now() + expiry : undefined,
+    {
+      delivery: 'pending',
+      duration: action === 'timeout' ? lifetime : undefined,
+      profile: logProfile(app, target, member),
+    },
   );
   const active =
     action === 'warn' ? warningHistory(app, i.guildId!, target).active.length : undefined;
@@ -270,7 +312,9 @@ async function performModeration(
       ' Use /appeal case:' +
       caseId +
       ' reason:YOUR_REASON in the server to appeal.',
+    false,
   );
+  await caseDelivery(app, caseId, delivery);
   let escalation = '';
   if (action === 'warn') {
     const cfg = app.store.config(i.guildId!),
@@ -324,8 +368,13 @@ async function performModeration(
           target,
           'warning-threshold',
           `${history.active.length} active warnings; ${cfg.warningTimeoutMinutes} minute timeout.`,
+          i.channelId!,
+          undefined,
+          undefined,
+          undefined,
+          { delivery: 'pending', duration: `${cfg.warningTimeoutMinutes} minutes` },
         );
-        await moderationNotice(
+        const timeoutDelivery = await moderationNotice(
           app,
           i.guildId!,
           i.guild!.name,
@@ -333,7 +382,9 @@ async function performModeration(
           'Automatic warning timeout',
           `${history.active.length} active warnings reached the configured threshold.`,
           `Case #${timeoutCase}. Duration: ${cfg.warningTimeoutMinutes} minutes. You can appeal individual warnings using /appeal.`,
+          false,
         );
+        await caseDelivery(app, timeoutCase, timeoutDelivery);
         escalation = ` Automatic ${cfg.warningTimeoutMinutes}-minute timeout applied.`;
       } catch (error) {
         app.store.put(i.guildId!, 'warningEscalation', String(caseId), {
@@ -344,8 +395,8 @@ async function performModeration(
           i.guildId!,
           'moderation',
           'Warning escalation not confirmed',
-          `Warning #${caseId} for <@${target}> was saved. ${safeMentions(error instanceof Error ? error.message : 'Discord request failed')}. Inspect the member before retrying; no automatic replay.`,
-          { force: true },
+          `Warning #${caseId} was saved. ${safeMentions(error instanceof Error ? error.message : 'Discord request failed')}. Inspect the member before retrying; no automatic replay.`,
+          { force: true, profile: logProfile(app, target) },
         );
         escalation =
           ' Warning saved, but automatic escalation could not be confirmed. Check staff logs and the member before retrying.';
@@ -370,13 +421,8 @@ async function performModeration(
 
 export async function moderationConfirmation(app: App, i: Interaction, pending: Confirmation) {
   enabled(app, i.guildId!, 'moderation');
-  const { target, reason, action, expires } = pending.payload as {
-    target: string;
-    reason: string;
-    action: string;
-    expires?: number;
-  };
-  const trigger = pending.payload.warningTrigger as WarningTrigger | undefined;
+  const payload = parseRemovalRequest({ ...pending.payload, originChannel: pending.channel });
+  const { target, reason, action, warningTrigger: trigger } = payload;
   await manageableMember(
     app,
     i,
@@ -411,7 +457,7 @@ export async function moderationConfirmation(app: App, i: Interaction, pending: 
     });
     app.store.put(i.guildId!, 'approval', key, {
       actor: i.user.id,
-      payload: { ...pending.payload, originChannel: pending.channel },
+      payload,
       expires: Date.now() + 600000,
       channel: channel.id,
       message: message.id,
@@ -428,7 +474,7 @@ export async function moderationConfirmation(app: App, i: Interaction, pending: 
     );
     return;
   }
-  await executeModeration(app, i, { ...pending.payload, originChannel: pending.channel });
+  await executeModeration(app, i, payload);
 }
 export const moderation: Module = {
   commands: {
@@ -507,9 +553,21 @@ export const moderation: Module = {
           actor.id === i.guild.ownerId || actor.roles.highest.position > 0,
           'Insufficient role hierarchy.',
         );
-        await i.guild.bans.remove(target, reason);
+        const eventToken = startModerationEvent(app, target, 'unban');
+        await i.guild.bans.remove(target, `${reason.slice(0, 350)} [mr-kat:${eventToken}]`);
         app.store.delete(i.guildId, 'banGeneration', target);
-        const caseId = await record(app, i, target, 'unban', reason);
+        const caseId = await record(
+          app,
+          i,
+          target,
+          'unban',
+          reason,
+          i.channelId,
+          undefined,
+          undefined,
+          undefined,
+          { delivery: 'pending', eventToken },
+        );
         const delivery = await moderationNotice(
           app,
           i.guildId,
@@ -518,7 +576,9 @@ export const moderation: Module = {
           'unban',
           reason,
           `Case #${caseId}. Contact staff if you need a new invitation.`,
+          false,
         );
+        await caseDelivery(app, caseId, delivery);
         await reply(i, `Unbanned. Case #${caseId}. DM: ${delivery}.`);
         return;
       }
@@ -543,12 +603,10 @@ export const moderation: Module = {
         return;
       }
       if (action === 'summary') {
-        const cases = app.store.cases(i.guildId, undefined, 1000);
-        const actors = new Map<string, number>();
-        for (const item of cases) actors.set(item.actor, (actors.get(item.actor) ?? 0) + 1);
+        const { total, actors } = app.store.staffCaseCounts(i.guildId);
         await reply(
           i,
-          `Staff actions in the latest ${cases.length} retained cases:\n${[...actors].map(([actor, count]) => `<@${actor}>: ${count}`).join('\n') || 'None.'}`,
+          `Staff actions in the latest ${total} retained cases:\n${actors.map(({ actor, count }) => `<@${actor}>: ${count}`).join('\n') || 'None.'}`,
         );
         return;
       }
@@ -556,10 +614,12 @@ export const moderation: Module = {
         assert(user, 'Select a member.');
         const member = await i.guild.members.fetch(user.id);
         const warnings = warningHistory(app, i.guildId, user.id);
-        const notes = app.store
-          .entries<{ target: string; actor: string; text: string }>(i.guildId, 'notes')
-          .filter((e) => e.data.target === user.id)
-          .slice(0, 5);
+        const notes = app.store.entriesMatching<{ target: string; actor: string; text: string }>(
+          i.guildId,
+          'notes',
+          { target: user.id },
+          5,
+        );
         await reply(i, {
           embeds: [
             embed(
@@ -579,9 +639,10 @@ export const moderation: Module = {
         return;
       }
       const cases = app.store.cases(i.guildId, user?.id, action === 'export' ? 1000 : 15);
-      const amendments = app.store
-        .entries(i.guildId, 'caseAmendments')
-        .filter((e) => cases.some((c) => c.id === (e.data as { caseId: number }).caseId));
+      const amendments = app.store.caseAmendments(
+        i.guildId,
+        cases.map((item) => item.id),
+      );
       if (action === 'export') {
         await reply(i, {
           files: [
@@ -621,20 +682,30 @@ export const moderation: Module = {
       'This approval request expired.',
     );
     assert(pending.actor !== i.user.id, 'A different staff member must approve this action.');
+    const payload = parseRemovalRequest(pending.payload);
     await manageableMember(
       app,
       i,
-      String(pending.payload.target),
-      pending.payload.action === 'ban' ? P.BanMembers : P.KickMembers,
+      payload.target,
+      payload.action === 'ban' ? P.BanMembers : P.KickMembers,
     );
     // Remove the request synchronously before awaiting the operation so concurrent clicks cannot approve twice.
     assert(app.store.get(i.guildId, 'approval', key), 'This request was already handled.');
     app.store.delete(i.guildId, 'approval', key);
     try {
-      await executeModeration(app, i, pending.payload, pending.actor);
+      await executeModeration(app, i, payload, pending.actor);
     } finally {
       await i.message.edit(updatedControls(i.message, [])).catch(() => undefined);
     }
     return true;
   },
 };
+
+export async function queueBatchNicknames(app: App, i: Component, pending: Confirmation) {
+  enabled(app, i.guildId, 'moderation');
+  await requirePermission(app, i, P.ManageNicknames);
+  await botPermission(i.guild, P.ManageNicknames);
+  const payload = parseBatchNicknames(pending.payload);
+  const key = app.store.job(i.guildId, i.user.id, 'batchNicknames', payload);
+  await reply(i, { content: `Nickname changes queued. Job: ${key}.`, components: [] });
+}

@@ -18,6 +18,7 @@ import { embed, noMentions, reply, linkButtons } from '../ui.js';
 import { destination, textChannel } from '../discord.js';
 import { directMessage } from '../dm.js';
 import { createHash } from 'node:crypto';
+import { serial } from '../concurrency.js';
 
 export interface Confession {
   id: number;
@@ -46,22 +47,6 @@ interface Participants {
 }
 interface Subscriptions {
   users: Record<string, { muted: boolean }>;
-}
-const discussions = new Map<string, Promise<void>>();
-async function serial<T>(key: string, work: () => Promise<T>): Promise<T> {
-  const previous = discussions.get(key) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  discussions.set(key, current);
-  await previous;
-  try {
-    return await work();
-  } finally {
-    release();
-    if (discussions.get(key) === current) discussions.delete(key);
-  }
 }
 function controls(id: number, post = id) {
   return [
@@ -411,15 +396,8 @@ export async function submitConfession(
     content.length >= 1 && content.length <= 1900,
     'Write a confession between 1 and 1900 characters.',
   );
-  assert(
-    app.store
-      .entries<Confession>(i.guildId!, 'confession', 1000)
-      .filter((e) => ['pending', 'review_failed', 'publishing', 'uncertain'].includes(e.data.state))
-      .length < 100,
-    'The confession queue is full. Ask staff to review unresolved submissions.',
-  );
   if (root) {
-    const thread = await serial(`${i.guildId}:${root.id}`, () =>
+    const thread = await serial(app, `confession:${i.guildId}:${root.id}`, () =>
       ensureConfessionThread(app, i.guildId!, rootItem(app, i.guildId!, root.id)),
     );
     root.thread = thread.id;
@@ -454,6 +432,11 @@ export async function submitConfession(
       current.reviewChannel === cfg.reviewChannel,
     'Confession settings changed. Run /confess again to read the current policy.',
   );
+  // Check the complete unresolved queue after asynchronous validation. No await before insertion.
+  assert(
+    app.store.pendingConfessions(i.guildId!) < 100,
+    'The confession queue is full. Ask staff to review unresolved submissions.',
+  );
   const number = app.store.nextSequence(i.guildId!, 'confession');
   const item: Confession = {
     id: number,
@@ -480,7 +463,7 @@ export async function submitConfession(
   });
   if (!cfg.reviewRequired) {
     try {
-      await serial(`${i.guildId}:${parent ?? number}`, () =>
+      await serial(app, `confession:${i.guildId}:${parent ?? number}`, () =>
         publishConfession(app, i.guildId!, item, publication),
       );
     } catch (error) {
@@ -708,7 +691,7 @@ export const confessions: Module = {
         const root = rootItem(app, i.guildId, number);
         const publication = await textChannel(app, i.guildId, root.channel);
         await requirePermission(app, i, P.ManageMessages, publication);
-        await serial(`${i.guildId}:${number}`, async () => {
+        await serial(app, `confession:${i.guildId}:${number}`, async () => {
           const current = rootItem(app, i.guildId, number);
           if (action === 'reopen') {
             if (current.thread) {
@@ -765,7 +748,7 @@ export const confessions: Module = {
         action === 'remove' && item.state === 'published' && item.message,
         'Only published confessions can be removed.',
       );
-      await serial(`${i.guildId}:${item.parent ?? number}`, async () => {
+      await serial(app, `confession:${i.guildId}:${item.parent ?? number}`, async () => {
         const current = app.store.get<Confession>(i.guildId, 'confession', String(number));
         assert(current?.state === 'published' && current.message, 'This post is already removed.');
         const channel = await textChannel(app, i.guildId, current.channel);
@@ -851,7 +834,10 @@ export const confessions: Module = {
           i.guildId,
           'reports',
           'Confession discussion reported',
-          `Discussion #${number}; post #${source.id}. https://discord.com/channels/${i.guildId}/${source.channel}/${source.message}\nNo participant or reporter identities are included.`,
+          `Discussion #${number}; post #${source.id}.\nNo participant or reporter identities are included.`,
+          {
+            reference: `https://discord.com/channels/${i.guildId}/${source.channel}/${source.message}`,
+          },
         );
         await reply(i, 'The discussion was flagged to staff.');
       }
@@ -890,7 +876,7 @@ export const confessions: Module = {
     app.store.put(i.guildId, 'confession', key!, item);
     if (action === 'approve') {
       try {
-        await serial(`${i.guildId}:${item.parent ?? item.id}`, () =>
+        await serial(app, `confession:${i.guildId}:${item.parent ?? item.id}`, () =>
           publishConfession(app, i.guildId, item!, publication!),
         );
       } catch (error) {

@@ -1,7 +1,7 @@
 import { sendModern } from './presentation.js';
+import { logProfile } from './log-profile.js';
 import {
   PermissionFlagsBits as P,
-  ChannelType,
   type Guild,
   type GuildMember,
   type GuildBasedChannel,
@@ -12,14 +12,15 @@ import { assert, errorText, logError } from './util.js';
 import { botPermission, checkHierarchy, safeRole } from './permissions.js';
 import { textChannel } from './discord.js';
 import { embed, noMentions } from './ui.js';
-import { lockChannel, restoreLock } from './modules/channels.js';
-import { updatePoll, type Poll } from './modules/community.js';
+import { updatePoll, type Poll } from './modules/polls.js';
 import type { RoleTimer } from './modules/roles.js';
 import { heartbeatTick } from './modules/heartbeat.js';
 import { runPurge } from './purge.js';
 import { expireUwuLocks } from './uwulock.js';
 import { publishAnnouncement } from './announcements.js';
 import { stickyTick } from './sticky.js';
+import { parseBatchRoles, parseBatchNicknames, type BatchResults } from './batch-request.js';
+import { runHoneypotCleanup, runHoneypotPurge, recoverHoneypot } from './honeypot.js';
 
 export async function jobAuthority(
   app: App,
@@ -51,26 +52,24 @@ function enabledJob(
   assert(app.store.config(job.guild).modules[module], `The ${module} module is disabled.`);
 }
 export async function runJob(app: App, job: Job): Promise<void> {
+  if (job.kind === 'honeypotCleanup') return runHoneypotCleanup(app, job);
+  if (job.kind === 'honeypotPurge') return runHoneypotPurge(app, job);
   const p = job.payload;
   if (job.kind === 'purge')
     return runPurge(app, job, (channel) => jobAuthority(app, job, P.ManageMessages, channel));
   if (job.kind === 'batchRoles') {
     enabledJob(app, job, 'roles');
-    const targets = p.targets as string[];
-    let index = Number(p.index ?? 0);
-    const results = (p.results ?? { changed: 0, skipped: 0, failed: 0, errors: [] }) as {
-      changed: number;
-      skipped: number;
-      failed: number;
-      errors: string[];
-    };
+    const request = parseBatchRoles(p),
+      { targets } = request;
+    let index = request.index;
+    const results: BatchResults = request.results;
     while (index < targets.length) {
       if (app.store.cancelled(job.id)) return;
       enabledJob(app, job, 'roles');
       try {
         const { guild, actor, me } = await jobAuthority(app, job, P.ManageRoles);
         const target = await guild.members.fetch(targets[index]!);
-        const role = await guild.roles.fetch(String(p.role));
+        const role = await guild.roles.fetch(request.role);
         assert(role && !role.managed && role.id !== guild.id, 'Role no longer assignable.');
         assert(!app.store.config(job.guild).protectedRoles.includes(role.id), 'Role is protected.');
         assert(me.roles.highest.comparePositionTo(role) > 0, 'Role is above the bot.');
@@ -89,10 +88,11 @@ export async function runJob(app: App, job: Job): Promise<void> {
             app.store.config(job.guild).protectedRoles,
           );
         const has = target.roles.cache.has(role.id);
-        if ((p.action === 'add' && has) || (p.action === 'remove' && !has)) results.skipped++;
+        if ((request.action === 'add' && has) || (request.action === 'remove' && !has))
+          results.skipped++;
         else {
-          if (p.action === 'add') await target.roles.add(role, String(p.reason));
-          else await target.roles.remove(role, String(p.reason));
+          if (request.action === 'add') await target.roles.add(role, request.reason);
+          else await target.roles.remove(role, request.reason);
           app.store.delete(job.guild, 'roleTimer', `${target.id}:${role.id}`);
           results.changed++;
         }
@@ -107,21 +107,18 @@ export async function runJob(app: App, job: Job): Promise<void> {
     await app.audit(
       job.guild,
       'admin',
-      `Batch roles ${job.id}`,
-      `By <@${job.actor}>. Changed: ${results.changed}; skipped: ${results.skipped}; failed: ${results.failed}.`,
+      'Batch roles completed',
+      `Changed: ${results.changed}; skipped: ${results.skipped}; failed: ${results.failed}.`,
+      { profile: logProfile(app, job.actor), footer: `Job ${job.id}` },
     );
     return;
   }
   if (job.kind === 'batchNicknames') {
     enabledJob(app, job, 'moderation');
-    const targets = p.targets as string[];
-    let index = Number(p.index ?? 0);
-    const results = (p.results ?? { changed: 0, skipped: 0, failed: 0, errors: [] }) as {
-      changed: number;
-      skipped: number;
-      failed: number;
-      errors: string[];
-    };
+    const request = parseBatchNicknames(p),
+      { targets } = request;
+    let index = request.index;
+    const results: BatchResults = request.results;
     while (index < targets.length) {
       if (app.store.cancelled(job.id)) return;
       enabledJob(app, job, 'moderation');
@@ -135,14 +132,14 @@ export async function runJob(app: App, job: Job): Promise<void> {
           guild.ownerId,
           app.store.config(job.guild).protectedRoles,
         );
-        const name = String(p.template)
+        const name = request.template
           .replaceAll('{name}', target.user.username)
           .replaceAll('{index}', String(index + 1))
           .slice(0, 32);
         assert(name.trim(), 'Generated nickname is empty.');
         if (target.nickname === name) results.skipped++;
         else {
-          await target.setNickname(name, String(p.reason));
+          await target.setNickname(name, request.reason);
           results.changed++;
         }
       } catch (error) {
@@ -156,8 +153,9 @@ export async function runJob(app: App, job: Job): Promise<void> {
     await app.audit(
       job.guild,
       'admin',
-      `Batch nicknames ${job.id}`,
+      'Batch nicknames completed',
       `Changed: ${results.changed}; skipped: ${results.skipped}; failed: ${results.failed}.`,
+      { profile: logProfile(app, job.actor), footer: `Job ${job.id}` },
     );
     return;
   }
@@ -285,51 +283,69 @@ export async function runJob(app: App, job: Job): Promise<void> {
 }
 export class Scheduler {
   private timer?: ReturnType<typeof setInterval>;
-  private active = false;
+  private readonly active = new Map<string, Promise<void>>();
   private stopping = false;
   constructor(private app: App) {}
   start() {
     this.app.store.recoverJobs();
+    recoverHoneypot(this.app);
     this.timer = setInterval(() => void this.tick(), 2000);
     this.timer.unref();
     void this.tick();
   }
   async tick() {
-    if (this.active || this.stopping) return;
-    this.active = true;
-    try {
-      await heartbeatTick(this.app).catch((error) => logError('heartbeat tick', error));
-      await stickyTick(this.app).catch((error) => logError('sticky tick', error));
-      await expireUwuLocks(this.app).catch((error) => logError('uwu expiry', error));
-      let job;
-      for (let count = 0; count < 5 && (job = this.app.store.claimJob()); count++) {
-        if (job.guild !== this.app.guildId) {
-          this.app.store.finishJob(job.id, 'failed', 'Job belongs to another server.');
-          continue;
-        }
-        try {
-          await this.app.runJob(job);
-          this.app.store.finishJob(job.id, 'done');
-        } catch (error) {
-          this.app.store.finishJob(job.id, 'failed', errorText(error));
-          logError(`job ${job.id}`, error);
-          await this.app
-            .audit(
-              job.guild,
-              'admin',
-              `Job failed: ${job.kind}`,
-              `Job ${job.id}: ${errorText(error)}`,
-            )
-            .catch((e) => logError('job failure log', e));
-        }
+    if (this.stopping) return;
+    const work: [string, () => Promise<unknown>][] = [
+      ['heartbeat', () => heartbeatTick(this.app)],
+      ['sticky', () => stickyTick(this.app)],
+      ['uwu expiry', () => expireUwuLocks(this.app)],
+      ['notifications', () => this.jobs('notifications')],
+      ['operations', () => this.jobs('operations')],
+    ];
+    const started: Promise<void>[] = [];
+    for (const [key, run] of work) {
+      if (this.active.has(key)) continue;
+      const task = Promise.resolve()
+        .then(run)
+        .then(() => undefined)
+        .catch((error) => logError(`scheduler ${key}`, error))
+        .finally(() => this.active.delete(key));
+      this.active.set(key, task);
+      started.push(task);
+    }
+    await Promise.all(started);
+  }
+  private async jobs(lane: 'notifications' | 'operations') {
+    let job;
+    for (
+      let count = 0;
+      count < 5 && !this.stopping && (job = this.app.store.claimJob(Date.now(), lane));
+      count++
+    ) {
+      if (job.guild !== this.app.guildId) {
+        this.app.store.finishJob(job.id, 'failed', 'Job belongs to another server.');
+        continue;
       }
-    } finally {
-      this.active = false;
+      try {
+        await this.app.runJob(job);
+        this.app.store.finishJob(job.id, 'done');
+      } catch (error) {
+        this.app.store.finishJob(job.id, 'failed', errorText(error));
+        logError(`job ${job.id}`, error);
+        await this.app
+          .audit(
+            job.guild,
+            'admin',
+            `Job failed: ${job.kind}`,
+            `Job ${job.id}: ${errorText(error)}`,
+          )
+          .catch((e) => logError('job failure log', e));
+      }
     }
   }
   async stop() {
     this.stopping = true;
     if (this.timer) clearInterval(this.timer);
-    while (this.active) await new Promise((resolve) => setTimeout(resolve, 50));
+    await Promise.all(this.active.values());
   }
 }

@@ -1,3 +1,4 @@
+import { auditChange } from './change-receipts.js';
 import { randomUUID } from 'node:crypto';
 import {
   ContainerBuilder,
@@ -15,6 +16,7 @@ import { modernEdit, sendModern } from './presentation.js';
 import { noMentions, reply, colors, linkButtons } from './ui.js';
 import { directMessage } from './dm.js';
 import { roastLines } from './roast-lines.js';
+import { serial } from './concurrency.js';
 import {
   normalizeRoast,
   publicRoastBoard,
@@ -54,42 +56,31 @@ export function roastSubmissionCard(key: string, item: RoastSubmission) {
   return { components: [card], allowedMentions: noMentions };
 }
 
-const renders = new WeakMap<App, Map<string, Promise<boolean>>>();
 export async function renderRoastSubmission(
   app: App,
   key: string,
   supplied?: Pick<Message, 'edit'>,
 ): Promise<boolean> {
-  let queue = renders.get(app);
-  if (!queue) renders.set(app, (queue = new Map()));
-  const next = (queue.get(key) ?? Promise.resolve())
-    .catch(() => false)
-    .then(async () => {
-      try {
-        let item = app.store.get<RoastSubmission>(app.guildId, 'roastSubmission', key);
-        if (!item?.message) return false;
-        const message =
-          supplied ??
-          (await (await publicRoastBoard(app, item.channel)).messages.fetch(item.message));
-        item = app.store.get<RoastSubmission>(app.guildId, 'roastSubmission', key)!;
-        await message.edit(modernEdit(roastSubmissionCard(key, item)));
-        const current = app.store.get<RoastSubmission>(app.guildId, 'roastSubmission', key);
-        if (current?.status === item.status && current.reviewedAt === item.reviewedAt) {
-          current.needsRender = false;
-          app.store.put(app.guildId, 'roastSubmission', key, current);
-        }
-        return true;
-      } catch (error) {
-        logError('roast review card', error);
-        return false;
+  return serial(app, `roast-render:${key}`, async () => {
+    try {
+      let item = app.store.get<RoastSubmission>(app.guildId, 'roastSubmission', key);
+      if (!item?.message) return false;
+      const message =
+        supplied ??
+        (await (await publicRoastBoard(app, item.channel)).messages.fetch(item.message));
+      item = app.store.get<RoastSubmission>(app.guildId, 'roastSubmission', key)!;
+      await message.edit(modernEdit(roastSubmissionCard(key, item)));
+      const current = app.store.get<RoastSubmission>(app.guildId, 'roastSubmission', key);
+      if (current?.status === item.status && current.reviewedAt === item.reviewedAt) {
+        current.needsRender = false;
+        app.store.put(app.guildId, 'roastSubmission', key, current);
       }
-    });
-  queue.set(key, next);
-  try {
-    return await next;
-  } finally {
-    if (queue.get(key) === next) queue.delete(key);
-  }
+      return true;
+    } catch (error) {
+      logError('roast review card', error);
+      return false;
+    }
+  });
 }
 export async function reconcileRoastReviews(app: App) {
   for (const entry of roastSubmissions(app)
@@ -217,11 +208,12 @@ export async function reviewRoast(app: App, i: Component) {
     'info',
     linkButtons([{ label: 'View submission', url }]),
   );
-  await app.audit(
-    i.guildId!,
-    'admin',
+  await auditChange(
+    app,
+    i,
     'Roast submission reviewed',
-    `Roast ${key} · ${item.status}\nStaff: <@${i.user.id}> · Author DM: ${delivery}`,
+    `Status: ${item.status}\nAuthor DM: ${delivery}`,
+    { footer: `Roast ${key}` },
   );
   await reply(
     i,

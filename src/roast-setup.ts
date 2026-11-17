@@ -1,3 +1,4 @@
+import { auditChange } from './change-receipts.js';
 import { randomUUID } from 'node:crypto';
 import {
   ContainerBuilder,
@@ -17,7 +18,7 @@ import { publicRoastBoard, roastSubmissions } from './roasts.js';
 import { renderRoastSubmission } from './roast-reviews.js';
 import { owner, requirePermission, botPermission } from './permissions.js';
 import { textChannel } from './discord.js';
-import { assert, safe } from './util.js';
+import { assert } from './util.js';
 import { reply, noMentions } from './ui.js';
 
 interface Panel {
@@ -52,7 +53,7 @@ export async function validateRoastConfig(app: App, cfg: RoastConfig) {
 function persist(app: App, key: string, panel: Panel) {
   app.store.put(app.guildId, 'roastPanel', key, panel);
 }
-async function settings(app: App, i: Interaction, key: string, panel: Panel, saved = false) {
+async function settings(_app: App, i: Interaction, key: string, panel: Panel, saved = false) {
   const prefix = `roastSetup:${panel.actor}:${key}:`;
   const card = new ContainerBuilder().addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
@@ -225,11 +226,11 @@ export async function roastSetupControl(app: App, i: Component) {
     app.store.setConfig(i.guildId!, cfg, i.user.id);
     panel.base = structuredClone(cfg.roast);
     persist(app, key, panel);
-    await app.audit(
-      i.guildId!,
-      'admin',
+    await auditChange(
+      app,
+      i,
       'Roast settings updated',
-      `By <@${i.user.id}> · ${cfg.roast.enabled ? 'Enabled' : 'Disabled'} · ${cfg.roast.channels.length ? cfg.roast.channels.map((id) => `<#${id}>`).join(', ') : 'Server-wide'} · Submission board: ${cfg.roast.reviewChannel ? `<#${cfg.roast.reviewChannel}>` : 'Not configured'}`,
+      `${cfg.roast.enabled ? 'Enabled' : 'Disabled'} · ${cfg.roast.channels.length ? cfg.roast.channels.map((id) => `<#${id}>`).join(', ') : 'Server-wide'}\nSubmission board: ${cfg.roast.reviewChannel ? `<#${cfg.roast.reviewChannel}>` : 'Not configured'}`,
       { force: true },
     );
     await settings(app, i, key, panel, true);
@@ -280,13 +281,9 @@ export async function roastSetupControl(app: App, i: Component) {
       app.store.put(i.guildId!, 'roastSubmission', panel.selected, item);
       panel.selectedStatus = item.status;
       await renderRoastSubmission(app, panel.selected);
-      await app.audit(
-        i.guildId!,
-        'admin',
-        'Custom roast availability changed',
-        `Roast ${safe(panel.selected)} · ${item.status} · By <@${i.user.id}>`,
-        { force: true },
-      );
+      await auditChange(app, i, 'Custom roast availability changed', `Status: ${item.status}`, {
+        footer: `Roast ${panel.selected}`,
+      });
     }
     await library(app, i, key, panel);
     return;

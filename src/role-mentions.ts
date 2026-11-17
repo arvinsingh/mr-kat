@@ -3,19 +3,8 @@ import { randomInt } from 'node:crypto';
 import { PermissionFlagsBits as P, type Message } from 'discord.js';
 import type { App } from './types.js';
 import { safe } from './util.js';
+import { logProfile } from './log-profile.js';
 
-export const roleMentionResponses = [
-  'The council has been paged. The support desk has a much better filing system.',
-  'You rang? Please take a ticket; it is considerably quieter than a role ping.',
-  'The staff summoning ritual has been intercepted by a very polite bot.',
-  'That role is not a doorbell. Luckily, we do have a support desk.',
-  'One ticket beats a chorus of pings. Let us keep the summoning circle tidy.',
-  'The emergency staff bat-signal is taking a tea break. Support is the way to go.',
-  'Your quest for assistance has a designated starting point: the support desk.',
-  'A wild staff ping appeared! Please redirect your quest to support.',
-  'The help queue accepts details, not decibels. A ticket will do nicely.',
-  'The team is easier to reach with a ticket than with a megaphone.',
-];
 interface Window {
   times: number[];
   replyAt: number;
@@ -76,7 +65,8 @@ export async function roleMentionReply(app: App, message: Message): Promise<bool
       app.guildId,
       'automod',
       'Repeated role mentions',
-      `<@${member.id}> in <#${channel.id}> · ${row.times.length} messages in ${guard.windowSeconds}s. Message: ${message.url}\nThe redirect guard did not delete the message or retract notifications.`,
+      `${row.times.length} messages in ${guard.windowSeconds}s.\nThe redirect guard did not delete the message or retract notifications.`,
+      { profile: logProfile(app, member.id, member), reference: message.url },
     );
   }
   // Bound automatic replies without imposing a cooldown on any user command.

@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 15 November 2026
+Last updated: 17 November 2026
 
 Mr. Kat is self-hosted software, not a centrally operated bot service. Each installation's operator controls its application, host, database, backups, settings, and access. Contact your server's administrators for the operator's privacy arrangements and data requests. Publishing this repository does not give its maintainer access to your installation.
 
@@ -16,10 +16,13 @@ The bot receives Discord events and interactions for its configured server. Depe
 - Message text and attachment references needed for logging, purge records, announcements, tags, text effects, and UwU replacements/editing.
 - Staff DM conversation mappings, message delivery receipts, and private-notification routing markers; suggestion authors, status updates, and discussion-thread references.
 - Roast participation preferences, public custom-roast submissions and author references, review decisions, delivery receipts, and recent channel choices used to reduce repeats.
+- Honeypot trigger evidence, timeout and cleanup outcomes, incident/release records, and progress through recent message history. Cleanup examines accessible server channels and threads for the triggering member's messages within the configured time window.
 
 Message Content access lets the bot process readable server messages for enabled features. It does not publish every message to a log. Optional persistent message snapshots default off (`snapshotDays: 0`); enabling them retains content for edit/deletion logs. Configured log messages, ticket transcripts, confessions, and transformed posts may disclose content to people who can access their destination.
 
 Purge operations capture available content before deletion and display usernames/text in paginated Discord log messages, linked to a moderation record when delivery succeeds. Protected-role mention redirects can retain repeat-mention incident details; the redirect itself leaves the original message intact. Members can inspect their own retained warnings; authorized staff can inspect others and revoke warnings. Revocation preserves the original case. Public moderation notices and recipient DMs omit staff attribution, but private records, host access, and Discord's audit log can identify staff.
+
+When honeypot protection is enabled, posting in its marked channel can trigger a timeout and deletion of that account's recent messages across accessible channels and threads. The default window is 30 minutes and the default timeout is 28 days; both are configurable. Legitimate messages within that window can also be removed. Incident evidence and available purge text are retained in private moderation logs. Staff can stop remaining cleanup and review the timeout; deleted messages cannot be restored.
 
 ## Confessions and DMs
 

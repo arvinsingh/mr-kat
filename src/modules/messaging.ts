@@ -1,4 +1,6 @@
+import { auditChange } from '../change-receipts.js';
 import { replyToDM } from '../dm-conversations.js';
+import { logProfile } from '../log-profile.js';
 import { sendModern, modernModal } from '../presentation.js';
 import {
   PermissionFlagsBits as P,
@@ -59,11 +61,12 @@ async function sendChannelText(app: App, i: Interaction, channelId: string, text
     );
     return;
   }
-  await app.audit(
-    i.guildId!,
-    'admin',
+  await auditChange(
+    app,
+    i,
     'Channel message sent',
-    `Staff: <@${i.user.id}> · Destination: <#${channelId}>. Message body is not copied into this record.`,
+    'Message body is not copied into this record.',
+    { profile: logProfile(app, i.user.id, i.member, i.user), reference: `<#${channelId}>` },
   );
   await reply(i, `Message sent in <#${channelId}>.`);
 }
@@ -83,7 +86,8 @@ export async function deliverStaffDM(app: App, i: Interaction, pending: Confirma
     i.guildId!,
     'moderation',
     'Staff DM delivery',
-    `Staff: <@${i.user.id}> · Recipient: <@${target.id}> · ${result}\nReason: ${safeMentions(pending.payload.reason)}\nMessage body is kept only in the configured private DM inbox.`,
+    `Staff: <@${i.user.id}>\nDelivery: ${result}\nReason: ${safeMentions(pending.payload.reason)}\nMessage body is kept only in the configured private DM inbox.`,
+    { profile: logProfile(app, target.id, target) },
   );
   await reply(i, {
     content: `DM delivery: ${result}. ${result === 'uncertain' ? 'Check with the recipient before retrying; it may have arrived.' : ''}`,

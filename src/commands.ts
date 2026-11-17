@@ -7,7 +7,7 @@ import {
 } from 'discord.js';
 import { logKinds, modules } from './config.js';
 import { textEffects } from './text-effects.js';
-import { healthTopics } from './setup-health.js';
+import { healthTopics } from './setup-settings.js';
 type Opt = {
   type: T;
   name: string;
@@ -86,6 +86,29 @@ const root = (
 });
 
 export const commands: RESTPostAPIApplicationCommandsJSONBody[] = [
+  root(
+    'honeypot',
+    'Detect channel-spraying accounts and clean up their recent messages',
+    [
+      sub('setup', 'Owner: create or update the honeypot channel', [
+        n(
+          'cleanup_minutes',
+          'Recent message window to delete (default 30 minutes)',
+          false,
+          1,
+          10080,
+        ),
+        n('timeout_days', 'Timeout duration (default 28 days)', false, 1, 28),
+        b('spoiler', 'Show Discord’s spoiler-channel entry notice (default true)'),
+      ]),
+      sub('status', 'Staff: inspect settings and recent incidents'),
+      sub('disable', 'Owner: stop detection and pending cleanup'),
+      sub('release', 'Staff: release a honeypot timeout and stop its pending cleanup', [
+        s('incident', 'Incident ID shown in the private moderation log', true),
+      ]),
+    ],
+    P.ModerateMembers,
+  ),
   {
     name: 'Edit transformed message',
     type: ApplicationCommandType.Message,

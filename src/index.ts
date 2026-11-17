@@ -1,26 +1,22 @@
 import { Client, Events, GatewayIntentBits, Options, Partials } from 'discord.js';
 import { setDefaultResultOrder } from 'node:dns';
 import { Store } from './store.js';
-import { environment, type LogKind } from './config.js';
+import { environment } from './config.js';
 import type { App } from './types.js';
 import { events } from './events.js';
 import { route } from './router.js';
 import { Scheduler, runJob } from './jobs.js';
-import { send, missingChannel } from './discord.js';
-import { auditPages } from './ui.js';
+import { AuditLogger } from './logging.js';
+import { flushMemberLogs } from './member-logs.js';
+import { flushModerationEvents } from './moderation-events.js';
 import { logError } from './util.js';
 import { reconcileVoice } from './modules/voice.js';
-import type { Ticket } from './modules/tickets.js';
-import { reconcileOnboarding } from './modules/onboarding.js';
-import { reconcileConfessionControls } from './modules/confessions.js';
 import { databaseLock } from './database-lock.js';
-import { maintainBackups } from './backup-health.js';
 import { stopUwuReplacements } from './uwulock.js';
 import { stopUwuAuthorActions } from './modules/uwulock.js';
-import { reconcileRoastReviews } from './roast-reviews.js';
-import { reconcileTicketCategories } from './ticket-categories.js';
+import { runMaintenance } from './maintenance.js';
 
-// Prefer IPv4 when both address families are available.
+// Also cover npm start/dev, which bypass the hosting bootstrap.
 setDefaultResultOrder('ipv4first');
 
 async function main() {
@@ -56,43 +52,16 @@ async function main() {
     makeCache: Options.cacheWithLimits({ MessageManager: 100 }),
     allowedMentions: { parse: [], repliedUser: false },
   });
-  let auditPending = 0;
   const app: App = {
     client,
     store,
     guildId: env.DISCORD_GUILD_ID,
     backupDir: env.BACKUP_DIR,
-    audit: async (guild, kind, title, description, options) => {
-      const cfg = store.config(guild);
-      if (!cfg.modules.logging && !options?.force) return;
-      const channel = cfg.logs[kind];
-      if (!channel) return;
-      if (auditPending >= 100 && !options?.force) {
-        console.warn('Log queue full; dropping an event log. Moderation cases remain in SQLite.');
-        return;
-      }
-      auditPending++;
-      try {
-        let firstMessage: string | undefined;
-        const pages = auditPages(kind, title, description);
-        for (const [index, page] of pages.entries()) {
-          if (index === 0 && options?.image) page.setImage(options.image);
-          const message = await send(app, guild, channel, {
-            embeds: [page],
-            ...(index === 0 && options?.files?.length ? { files: options.files } : {}),
-          });
-          store.put(guild, 'logMessage', message.id, { channel, created: Date.now(), kind });
-          firstMessage ??= `https://discord.com/channels/${guild}/${channel}/${message.id}`;
-        }
-        return firstMessage;
-      } catch (error) {
-        logError(`log destination ${kind}`, error);
-      } finally {
-        auditPending--;
-      }
-    },
+    audit: async () => undefined,
     runJob: (job) => runJob(app, job),
   };
+  const logger = new AuditLogger(app);
+  app.audit = logger.audit;
   const scheduler = new Scheduler(app);
   events(app);
   client.on(Events.InteractionCreate, (i) => {
@@ -106,42 +75,7 @@ async function main() {
     if (maintenanceActive) return;
     maintenanceActive = true;
     try {
-      // Backups must not depend on unrelated Discord cleanup/reconciliation succeeding.
-      await maintainBackups(app).catch((error) => logError('backup maintenance', error));
-      const cfg = store.config(app.guildId);
-      store.prune(app.guildId, cfg.snapshotDays, cfg.retentionDays);
-      const guild = await client.guilds.fetch(app.guildId);
-      if (cfg.modules.voice) await reconcileVoice(app, guild);
-      await reconcileOnboarding(app);
-      await reconcileConfessionControls(app);
-      await reconcileRoastReviews(app);
-      const cutoff = Date.now() - cfg.retentionDays * 86400000;
-      for (const item of store.entriesBefore<Ticket>(app.guildId, 'ticket', cutoff, 100))
-        if (item.data.status === 'closed' && item.data.closedAt && item.data.closedAt < cutoff) {
-          const channel = await guild.channels.fetch(item.key).catch(missingChannel);
-          if (channel) await channel.delete('Closed ticket retention expired');
-          store.delete(app.guildId, 'ticket', item.key);
-        }
-      await reconcileTicketCategories(app, guild);
-      for (const item of store.entriesBefore<{ channel: string; created: number; kind: LogKind }>(
-        app.guildId,
-        'logMessage',
-        cutoff,
-        100,
-      )) {
-        const channel = await client.channels.fetch(item.data.channel).catch(missingChannel);
-        if (channel?.isTextBased()) {
-          try {
-            const message = await channel.messages.fetch(item.key);
-            if (message.author.id === client.user!.id) await message.delete();
-          } catch (error) {
-            if ((error as { code?: number }).code !== 10008) throw error;
-          }
-        }
-        store.delete(app.guildId, 'logMessage', item.key);
-      }
-    } catch (error) {
-      logError('maintenance', error);
+      await runMaintenance(app);
     } finally {
       maintenanceActive = false;
     }
@@ -152,8 +86,10 @@ async function main() {
     if (housekeeping) clearInterval(housekeeping);
     await scheduler.stop();
     await Promise.all([stopUwuReplacements(app), stopUwuAuthorActions(app)]);
-    while (maintenanceActive || auditPending)
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    await flushMemberLogs(app);
+    await flushModerationEvents(app);
+    while (maintenanceActive) await new Promise((resolve) => setTimeout(resolve, 50));
+    await logger.close();
     client.destroy();
     store.close();
     await releaseDatabase();

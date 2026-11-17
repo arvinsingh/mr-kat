@@ -6,6 +6,7 @@ import { safe } from './util.js';
 import { randomUUID } from 'node:crypto';
 import type { ActionRowBuilder, ButtonBuilder, AttachmentBuilder } from 'discord.js';
 import { logOutgoingDM } from './dm-conversations.js';
+import { logProfile } from './log-profile.js';
 
 export type Delivery = 'sent' | 'blocked' | 'failed' | 'uncertain';
 // Never log Discord request bodies: they can contain private messages or participant IDs.
@@ -70,6 +71,7 @@ export async function moderationNotice(
   action: string,
   reason: string,
   details = '',
+  logDelivery = true,
 ): Promise<Delivery> {
   const result = await directMessage(
     app,
@@ -78,13 +80,15 @@ export async function moderationNotice(
     `Action: **${safe(action, 70)}**\nReason: ${safe(reason, 1500)}${details ? `\n${details}` : ''}${app.store.config(guild).logs.dm ? '' : '\n\nContact the server staff for help.'}`,
     'moderation',
   );
-  await app
-    .audit(
-      guild,
-      'moderation',
-      'Moderation DM delivery',
-      `Member: <@${user}> · ${safe(action, 70)} · ${result}.`,
-    )
-    .catch(() => undefined);
+  if (logDelivery)
+    await app
+      .audit(
+        guild,
+        'moderation',
+        'Moderation DM delivery',
+        `Action: ${safe(action, 70)}\nDelivery: ${result}.`,
+        { profile: logProfile(app, user) },
+      )
+      .catch(() => undefined);
   return result;
 }

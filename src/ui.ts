@@ -12,7 +12,7 @@ import type { App, Interaction, Component } from './types.js';
 import { assert } from './util.js';
 import type { LogKind } from './config.js';
 import { responsePath } from './response-policy.js';
-import { modernPages } from './presentation.js';
+import { modernPages, splitDisplayText } from './presentation.js';
 
 export const colors = {
   info: 0x5865f2,
@@ -104,23 +104,13 @@ export function auditEmbed(kind: LogKind, title: string, description: string): E
   let tone: Tone = kind;
   if (kind === 'messages' && /delet/i.test(title)) tone = 'error';
   if (kind === 'messages' && /edit/i.test(title)) tone = 'warning';
-  if (kind === 'members' && /left/i.test(title)) tone = 'reports';
+  if (kind === 'members' && /left|departed/i.test(title)) tone = 'reports';
+  if (kind === 'members' && /roles removed/i.test(title)) tone = 'warning';
+  if (kind === 'members' && /roles changed/i.test(title)) tone = 'admin';
   return embed(title, description, tone);
 }
 export function auditPages(kind: LogKind, title: string, description: string): EmbedBuilder[] {
-  const parts: string[] = [];
-  let remaining = description || '[No details]';
-  while (remaining.length > 3500) {
-    let end = remaining.lastIndexOf('\n', 3500) + 1;
-    if (end < 1750) end = 3500;
-    // Avoid cutting a surrogate pair or a Discord mention in half.
-    if (/[\uD800-\uDBFF]/.test(remaining[end - 1]!)) end--;
-    const open = remaining.lastIndexOf('<', end - 1);
-    if (open > end - 40 && remaining.indexOf('>', open) >= end) end = open;
-    parts.push(remaining.slice(0, end));
-    remaining = remaining.slice(end);
-  }
-  if (remaining) parts.push(remaining);
+  const parts = splitDisplayText(description || '[No details]');
   return parts.map((part, index) =>
     auditEmbed(
       kind,

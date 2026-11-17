@@ -1,9 +1,10 @@
 import { ChannelType, PermissionFlagsBits as P, PermissionsBitField } from 'discord.js';
-import type { App, Module } from '../types.js';
+import type { Module } from '../types.js';
 import { logKinds } from '../config.js';
 import { owner, requirePermission, botPermission } from '../permissions.js';
 import { assert } from '../util.js';
 import { reply } from '../ui.js';
+import { logHealthText } from '../logging.js';
 
 const names = {
   moderation: 'moderation-logs',
@@ -29,7 +30,9 @@ export const logs: Module = {
               (kind) =>
                 `**${kind}:** ${cfg.logs[kind] ? `<#${cfg.logs[kind]}>` : 'Not configured'}`,
             )
-            .join('\n'),
+            .join('\n') +
+            '\n\n**Delivery health**\n' +
+            logHealthText(app),
         );
         return;
       }

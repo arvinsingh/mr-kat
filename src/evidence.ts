@@ -1,7 +1,7 @@
 import { displayText } from './presentation.js';
 import { PermissionFlagsBits as P, type Message } from 'discord.js';
 import type { App, Interaction } from './types.js';
-import { assert, safeMentions } from './util.js';
+import { assert, safe, safeMentions } from './util.js';
 import { textChannel } from './discord.js';
 
 export interface MessageEvidence {
@@ -81,4 +81,7 @@ export async function resolveEvidence(app: App, i: Interaction, reference?: stri
 
 export function evidenceText(evidence: MessageEvidence) {
   return `Message evidence: ${evidence.url}\nMessage ID: ${evidence.id}\nAuthor ID: ${evidence.author ?? 'not recorded'}\nCaptured: ${evidence.capturedAt ? new Date(evidence.capturedAt).toISOString() : 'legacy record'}\n${safeMentions(evidence.content || '[No text]')}${evidence.attachments?.length ? '\n' + evidence.attachments.map((a) => `Attachment reference: ${safeMentions(a.name)} · ${a.url}`).join('\n') : ''}`;
+}
+export function evidenceSummary(evidence: MessageEvidence) {
+  return `Evidence · ${evidence.url}${evidence.author ? `\nAuthor: <@${evidence.author}>` : ''}\n${safeMentions(evidence.content || '[No text]')}${evidence.attachments?.length ? '\nAttachments:\n' + evidence.attachments.map((file) => `[${safe(file.name, 150)}](<${file.url}>)`).join('\n') : ''}`;
 }

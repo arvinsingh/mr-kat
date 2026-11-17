@@ -1,36 +1,18 @@
-import { DatabaseSync } from 'node:sqlite';
-import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import {
-  chmod,
-  copyFile,
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  realpath,
-  rename,
-  stat,
-  unlink,
-  writeFile,
-} from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { chmod, copyFile, lstat, mkdir, rename, unlink } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { App } from './types.js';
-import { configSchema } from './config.js';
+import type { Store } from './store.js';
 import { assert, errorText } from './util.js';
 import { databaseLock } from './database-lock.js';
+import { inspectBackup, backupPath, listBackups, publishBackup } from './backup-files.js';
 
-export interface BackupCheck {
-  file: string;
-  bytes: number;
-  modified: number;
-  sha256: string;
-  manifest: boolean;
-  schema: number;
-  pendingJobs: number;
-  pendingKinds: Record<string, number>;
-  settings: number;
+export interface BackupContext {
+  store: Pick<Store, 'get' | 'put' | 'backup'>;
+  guildId: string;
+  backupDir: string;
 }
+
 export interface BackupState {
   lastAttempt?: number;
   lastSuccess?: number;
@@ -39,202 +21,66 @@ export interface BackupState {
   lastError?: string;
   lastVerification?: { file: string; at: number; ok: boolean; error?: string };
 }
-const backupName = /^(?:automatic|manual|bot)-\d+(?:-[a-f0-9]+)?\.sqlite$/;
-export async function checksum(path: string) {
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
-  return hash.digest('hex');
-}
-export async function backupPath(folder: string, file: string) {
-  assert(
-    backupName.test(file) && basename(file) === file,
-    'Choose a backup filename from the backup list.',
-  );
-  const path = join(resolve(folder), file);
-  const info = await lstat(path);
-  assert(info.isFile() && !info.isSymbolicLink(), 'Backup must be a regular file, not a link.');
-  assert(
-    dirname(await realpath(path)) === (await realpath(folder)),
-    'Backup is outside the configured directory.',
-  );
-  assert(
-    info.size > 0 && info.size <= 512 * 1024 * 1024,
-    'Backup is empty or exceeds the 512 MB verification limit.',
-  );
-  return path;
-}
-export async function listBackups(folder: string, limit = 25) {
-  await mkdir(folder, { recursive: true });
-  const names = (await readdir(folder)).filter((file) => backupName.test(file));
-  const items = await Promise.all(
-    names.map(async (file) => {
-      const info = await lstat(join(folder, file));
-      return {
-        file,
-        bytes: info.size,
-        modified: info.mtimeMs,
-        regular: info.isFile() && !info.isSymbolicLink(),
-      };
-    }),
-  );
-  return items
-    .filter((item) => item.regular)
-    .sort((a, b) => b.modified - a.modified)
-    .slice(0, limit);
-}
-export async function inspectBackup(path: string, guildId?: string): Promise<BackupCheck> {
-  const info = await lstat(path);
-  assert(
-    info.isFile() && !info.isSymbolicLink() && info.size > 0 && info.size <= 512 * 1024 * 1024,
-    'Choose a regular nonempty SQLite backup of at most 512 MB.',
-  );
-  try {
-    assert(
-      (await stat(path + '-wal')).size === 0,
-      'This file has a nonempty WAL. Create a consistent backup first; do not copy a live database alone.',
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-  const db = new DatabaseSync(path, { readOnly: true });
-  let schema = 0,
-    pendingJobs = 0,
-    settings = 0;
-  let pendingKinds: Record<string, number> = {};
-  try {
-    db.exec('PRAGMA trusted_schema=OFF; PRAGMA query_only=ON;');
-    const rows = db.prepare('PRAGMA integrity_check').all();
-    assert(
-      rows.length === 1 && Object.values(rows[0]!)[0] === 'ok',
-      'SQLite integrity verification failed.',
-    );
-    assert(
-      db.prepare('PRAGMA foreign_key_check').all().length === 0,
-      'SQLite foreign-key verification failed.',
-    );
-    for (const table of [
-      'settings',
-      'entries',
-      'jobs',
-      'cases',
-      'migrations',
-      'snapshots',
-      'counters',
-    ]) {
-      const row = db.prepare('SELECT type FROM sqlite_master WHERE name=?').get(table);
-      assert(row?.type === 'table', 'This is not a compatible mr-kat backup.');
-      if (guildId && table !== 'migrations') {
-        assert(
-          !db.prepare(`SELECT 1 FROM ${table} WHERE guild!=? LIMIT 1`).get(guildId),
-          'The backup contains records for another server.',
-        );
-      }
-    }
-    schema = Number(db.prepare('SELECT MAX(version) AS version FROM migrations').get()?.version);
-    assert(schema >= 1 && schema <= 2, 'The backup schema is not supported by this bot version.');
-    for (const row of db.prepare('SELECT data FROM settings').all())
-      configSchema.parse(JSON.parse(String(row.data)));
-    settings = Number(db.prepare('SELECT COUNT(*) AS n FROM settings').get()!.n);
-    pendingJobs = Number(
-      db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE state IN ('ready','running')").get()!.n,
-    );
-    pendingKinds = Object.fromEntries(
-      db
-        .prepare(
-          "SELECT kind,COUNT(*) AS n FROM jobs WHERE state IN ('ready','running') GROUP BY kind",
-        )
-        .all()
-        .map((row) => [String(row.kind), Number(row.n)]),
-    );
-  } finally {
-    db.close();
-  }
-  const sha256 = await checksum(path);
-  let manifest = false;
-  try {
-    const manifestInfo = await lstat(path + '.manifest.json');
-    assert(
-      manifestInfo.isFile() && !manifestInfo.isSymbolicLink() && manifestInfo.size <= 64000,
-      'Checksum manifest must be a regular file of at most 64 KB.',
-    );
-    const metadata = JSON.parse(await readFile(path + '.manifest.json', 'utf8'));
-    assert(
-      metadata.sha256 === sha256 &&
-        metadata.bytes === info.size &&
-        metadata.file === basename(path),
-      'Backup checksum manifest does not match its file.',
-    );
-    manifest = true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-  return {
-    file: basename(path),
-    bytes: info.size,
-    modified: info.mtimeMs,
-    sha256,
-    manifest,
-    schema,
-    pendingJobs,
-    pendingKinds,
-    settings,
-  };
-}
-const busy = new WeakSet<App>();
-export async function verifyLocalBackup(app: App, file: string) {
-  const state = app.store.get<BackupState>(app.guildId, 'system', 'backupHealth') ?? {};
+const busy = new WeakSet<BackupContext>();
+export async function verifyLocalBackup(app: BackupContext, file: string) {
   try {
     const check = await inspectBackup(await backupPath(app.backupDir, file), app.guildId);
     app.store.put(app.guildId, 'system', 'backupHealth', {
-      ...state,
+      ...app.store.get<BackupState>(app.guildId, 'system', 'backupHealth'),
       lastVerified: Date.now(),
       lastVerification: { file, at: Date.now(), ok: true },
     } satisfies BackupState);
     return check;
   } catch (error) {
-    app.store.put(app.guildId, 'system', 'backupHealth', {
-      ...state,
-      lastVerification: {
-        file: basename(file),
-        at: Date.now(),
-        ok: false,
-        error: errorText(error),
-      },
-    } satisfies BackupState);
+    try {
+      app.store.put(app.guildId, 'system', 'backupHealth', {
+        ...app.store.get<BackupState>(app.guildId, 'system', 'backupHealth'),
+        lastVerification: {
+          file: basename(file),
+          at: Date.now(),
+          ok: false,
+          error: errorText(error),
+        },
+      } satisfies BackupState);
+    } catch {
+      /* Preserve the verification error when health storage is unavailable too. */
+    }
     throw error;
   }
 }
-export async function createVerifiedBackup(app: App, automatic = false) {
+export async function createVerifiedBackup(app: BackupContext, automatic = false) {
   assert(!busy.has(app), 'A backup is already being created. Refresh its status shortly.');
   busy.add(app);
-  const state = app.store.get<BackupState>(app.guildId, 'system', 'backupHealth') ?? {};
-  state.lastAttempt = Date.now();
-  app.store.put(app.guildId, 'system', 'backupHealth', state);
+  const attempted = Date.now();
   const file = `${automatic ? 'automatic' : 'manual'}-${Date.now()}-${randomUUID().slice(0, 8)}.sqlite`;
   const path = join(app.backupDir, file),
     temporary = path + '.partial';
   try {
+    app.store.put(app.guildId, 'system', 'backupHealth', {
+      ...app.store.get<BackupState>(app.guildId, 'system', 'backupHealth'),
+      lastAttempt: attempted,
+    } satisfies BackupState);
     await app.store.backup(temporary);
     await chmod(temporary, 0o600);
-    await inspectBackup(temporary, app.guildId);
-    await rename(temporary, path);
-    const check = await inspectBackup(path, app.guildId);
-    await writeFile(
-      path + '.manifest.json',
-      JSON.stringify({ ...check, created: Date.now() }, null, 2),
-      { mode: 0o600 },
-    );
-    const verified = await inspectBackup(path, app.guildId);
+    const verified = await publishBackup(temporary, path, app.guildId);
     app.store.put(app.guildId, 'system', 'backupHealth', {
-      lastAttempt: state.lastAttempt,
+      ...app.store.get<BackupState>(app.guildId, 'system', 'backupHealth'),
       lastSuccess: Date.now(),
       lastVerified: Date.now(),
       lastFile: file,
+      lastError: undefined,
     } satisfies BackupState);
     app.store.put(app.guildId, 'system', 'backup', { at: Date.now() });
     return verified;
   } catch (error) {
-    app.store.put(app.guildId, 'system', 'backupHealth', { ...state, lastError: errorText(error) });
+    try {
+      app.store.put(app.guildId, 'system', 'backupHealth', {
+        ...app.store.get<BackupState>(app.guildId, 'system', 'backupHealth'),
+        lastError: errorText(error),
+      });
+    } catch {
+      /* Preserve the original error if health storage is unavailable too. */
+    }
     throw error;
   } finally {
     busy.delete(app);

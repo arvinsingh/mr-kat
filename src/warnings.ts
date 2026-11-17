@@ -5,6 +5,8 @@ import { assert, safeMentions } from './util.js';
 import { enabled, requirePermission } from './permissions.js';
 import { moderationNotice } from './dm.js';
 import { channelNotice } from './notices.js';
+import { exclusive } from './concurrency.js';
+import { logProfile } from './log-profile.js';
 
 export interface WarningRevocation {
   actor: string;
@@ -19,13 +21,8 @@ export interface WarningTrigger {
 }
 export function warningHistory(app: App, guild: string, target: string) {
   const now = Date.now();
-  const rows = app.store.warningCases(guild, target).map((record) => {
-    const revoked = app.store.get<WarningRevocation>(guild, 'warningRevocation', String(record.id));
-    const expires = app.store.get<{ expires: number }>(
-      guild,
-      'warningExpiry',
-      String(record.id),
-    )?.expires;
+  const rows = app.store.warningCases<WarningRevocation>(guild, target).map((record) => {
+    const { revoked, expires } = record;
     const status = revoked
       ? 'revoked'
       : expires !== undefined && expires <= now
@@ -43,23 +40,18 @@ export function warningHistory(app: App, guild: string, target: string) {
 }
 
 // Serialize new warnings per member, while allowing appeals/revocations during DM delivery.
-const issuing = new WeakMap<App, Set<string>>();
-export async function withWarningLock<T>(
+export function withWarningLock<T>(
   app: App,
   guild: string,
   target: string,
   work: () => Promise<T>,
 ) {
-  let busy = issuing.get(app);
-  if (!busy) issuing.set(app, (busy = new Set()));
-  const key = guild + ':' + target;
-  assert(!busy.has(key), 'A warning for this member is already being processed.');
-  busy.add(key);
-  try {
-    return await work();
-  } finally {
-    busy.delete(key);
-  }
+  return exclusive(
+    app,
+    `warning:${guild}:${target}`,
+    'A warning for this member is already being processed.',
+    work,
+  );
 }
 
 export function validateWarningKick(
@@ -116,13 +108,6 @@ export async function revokeWarning(
     );
   });
   const active = warningHistory(app, i.guildId!, record.target).active.length;
-  await app.audit(
-    i.guildId!,
-    'moderation',
-    `Warning #${caseId} revoked`,
-    `Member: <@${record.target}>\nStaff: <@${i.user.id}>\nReason: ${safeMentions(reason)}\nActive warnings: ${active}${appeal ? '\nAppeal: ' + appeal : ''}`,
-    { force: true },
-  );
   await channelNotice(
     app,
     i.guildId!,
@@ -139,6 +124,14 @@ export async function revokeWarning(
     'Warning revoked',
     reason,
     `Warning #${caseId} no longer counts toward automatic escalation. Active warnings: ${active}. The original record remains in history.`,
+    false,
+  );
+  await app.audit(
+    i.guildId!,
+    'moderation',
+    `Warning #${caseId} revoked`,
+    `Staff: <@${i.user.id}>\nReason: ${safeMentions(reason)}\nActive warnings: ${active}\nMember DM: ${dm}${appeal ? '\nAppeal: ' + appeal : ''}`,
+    { force: true, profile: logProfile(app, record.target) },
   );
   return { record: record as Case, active, dm };
 }

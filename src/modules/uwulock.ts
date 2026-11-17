@@ -1,4 +1,6 @@
 import { modernModal, modernEdit, displayText } from '../presentation.js';
+import { logProfile } from '../log-profile.js';
+import { logText } from '../log-format.js';
 import {
   ActionRowBuilder,
   AttachmentBuilder,
@@ -15,7 +17,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import type { App, Interaction, Component, Module } from '../types.js';
 import { requirePermission, enabled } from '../permissions.js';
-import { assert, duration, safeMentions } from '../util.js';
+import { assert, duration } from '../util.js';
 import { textChannel } from '../discord.js';
 import { reply, confirm, noMentions, readOnlyResponse, type Confirmation } from '../ui.js';
 import {
@@ -291,7 +293,13 @@ export async function uwuContext(app: App, i: MessageContextMenuCommandInteracti
       i.guildId,
       'messages',
       'UwU message deleted by author',
-      `Author: <@${i.user.id}>\nChannel: <#${channel.id}>\nMessage ID: ${i.targetId}\nText: ${safeMentions(post.input)}\nDisplayed text: ${safeMentions(message.content || displayText(message))}`,
+      `Original: ${logText(post.input)}\n---\nDisplayed: ${logText(message.content || displayText(message))}`,
+      {
+        profile: logProfile(app, i.user.id, i.member, i.user),
+        reference: `<#${channel.id}>`,
+        dividers: true,
+        source: { channel: channel.id, message: i.targetId, author: i.user.id },
+      },
     );
     await reply(i, 'Your transformed message was deleted.');
   } finally {
@@ -341,12 +349,10 @@ async function editPost(app: App, i: Component) {
       cfg.automod,
     );
     if (reason) {
-      await app.audit(
-        i.guildId,
-        'automod',
-        'UwU edit blocked',
-        `<@${i.user.id}> in <#${channel.id}>: ${reason}.`,
-      );
+      await app.audit(i.guildId, 'automod', 'UwU edit blocked', `Reason: ${reason}.`, {
+        profile: logProfile(app, i.user.id, i.member, i.user),
+        reference: `<#${channel.id}>`,
+      });
       assert(false, `The edit was blocked by AutoMod: ${reason}.`);
     }
   }
@@ -396,7 +402,13 @@ async function editPost(app: App, i: Component) {
       i.guildId,
       'messages',
       'UwU message edited by author',
-      `Author: <@${i.user.id}>\nChannel: <#${channel.id}>\nMessage: ${message.url}\nBefore: ${safeMentions(post.input)}\nAfter: ${safeMentions(input)}`,
+      `Before: ${logText(post.input)}\n---\nAfter: ${logText(input)}`,
+      {
+        profile: logProfile(app, i.user.id, i.member, i.user),
+        reference: message.url,
+        dividers: true,
+        source: { channel: channel.id, message: draft.post, author: i.user.id },
+      },
     );
     await reply(i, 'Your message was updated.');
   } finally {

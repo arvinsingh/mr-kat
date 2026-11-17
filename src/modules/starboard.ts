@@ -1,4 +1,4 @@
-import { modernEdit, sendModern } from '../presentation.js';
+import { modernEdit, sendModern, hasMessageFooter } from '../presentation.js';
 import {
   ChannelType,
   ReactionType,
@@ -15,6 +15,7 @@ import { textChannel } from '../discord.js';
 import { embed, linkButtons, noMentions, reply } from '../ui.js';
 import { assert, safe, UserError } from '../util.js';
 import { messageLogExcludedChannel } from '../message-logs.js';
+import { serial } from '../concurrency.js';
 
 export interface StarboardEntry {
   sourceChannel: string;
@@ -24,17 +25,6 @@ export interface StarboardEntry {
   boardMessage?: string;
   count: number;
   state: 'publishing' | 'published' | 'uncertain';
-}
-const pending = new Map<string, Promise<void>>();
-async function serial(key: string, work: () => Promise<void>) {
-  const previous = pending.get(key) ?? Promise.resolve();
-  const next = previous.catch(() => undefined).then(work);
-  pending.set(key, next);
-  try {
-    await next;
-  } finally {
-    if (pending.get(key) === next) pending.delete(key);
-  }
 }
 export function starboardSourceAllowed(
   message: Message,
@@ -123,7 +113,7 @@ export async function removeStarboardMessage(
   message: Pick<Message | PartialMessage, 'id' | 'guildId'>,
 ) {
   if (message.guildId !== app.guildId) return;
-  await serial(`${app.guildId}:${message.id}`, async () => {
+  await serial(app, `starboard:${app.guildId}:${message.id}`, async () => {
     const entry = app.store.get<StarboardEntry>(app.guildId, 'starboardEntry', message.id);
     if (entry) await removeEntry(app, message.id, entry);
   });
@@ -140,7 +130,7 @@ export async function starboardChannelChanged(app: App, channel: string, deleted
     )
       continue;
     if (deleted && item.data.boardChannel === channel) {
-      await serial(`${app.guildId}:${item.key}`, async () => {
+      await serial(app, `starboard:${app.guildId}:${item.key}`, async () => {
         app.store.delete(app.guildId, 'starboardEntry', item.key);
       });
     } else if (deleted && [item.data.sourceChannel, item.data.sourceParent].includes(channel)) {
@@ -162,7 +152,7 @@ export async function syncStarboard(
   const initial = app.store.config(app.guildId);
   if (!initial.modules.community || !initial.starboard.enabled || !initial.starboard.channel)
     return;
-  await serial(`${app.guildId}:${source.id}`, async () => {
+  await serial(app, `starboard:${app.guildId}:${source.id}`, async () => {
     const cfg = app.store.config(app.guildId);
     if (!cfg.modules.community || !cfg.starboard.enabled || !cfg.starboard.channel) return;
     let entry = app.store.get<StarboardEntry>(app.guildId, 'starboardEntry', source.id);
@@ -171,8 +161,7 @@ export async function syncStarboard(
       const recent = await board.messages.fetch({ limit: 100 });
       const found = recent.find(
         (m) =>
-          m.author.id === app.client.user!.id &&
-          m.embeds.some((e) => e.footer?.text === `Starboard · ${source.id}`),
+          m.author.id === app.client.user!.id && hasMessageFooter(m, `Starboard · ${source.id}`),
       );
       if (found) {
         entry.boardMessage = found.id;

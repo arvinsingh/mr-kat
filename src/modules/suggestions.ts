@@ -1,3 +1,4 @@
+import { auditChange } from '../change-receipts.js';
 import {
   ContainerBuilder,
   SectionBuilder,
@@ -21,6 +22,7 @@ import { modernModal, modernEdit, sendModern } from '../presentation.js';
 import { noMentions, reply, linkButtons, colors } from '../ui.js';
 import { safe, assert } from '../util.js';
 import { directMessage } from '../dm.js';
+import { serial } from '../concurrency.js';
 
 export const suggestionStates = [
   'open',
@@ -31,17 +33,49 @@ export const suggestionStates = [
   'implemented',
   'declined',
 ] as const;
+export type SuggestionState = (typeof suggestionStates)[number];
 export interface Suggestion {
   actor: string;
   authorName?: string;
   text: string;
-  state: string;
+  state: SuggestionState;
   reason?: string;
   channel: string;
   message: string;
   thread?: string;
   created?: number;
   replyControl?: string;
+  needsRender?: boolean;
+  revision?: number;
+}
+export function renderSuggestion(app: App, guild: string, key: string): Promise<boolean> {
+  return serial(app, `suggestion-render:${guild}:${key}`, async () => {
+    try {
+      let item = app.store.get<Suggestion>(guild, 'suggestion', key);
+      if (!item?.message) return false;
+      const channel = await textChannel(app, guild, item.channel);
+      const message = await channel.messages.fetch(item.message);
+      item = app.store.get<Suggestion>(guild, 'suggestion', key)!;
+      await message.edit(modernEdit(suggestionCard(key, item, guild)));
+      const current = app.store.get<Suggestion>(guild, 'suggestion', key);
+      if (current && current.revision === item.revision) {
+        current.needsRender = false;
+        app.store.put(guild, 'suggestion', key, current);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+export async function reconcileSuggestions(app: App) {
+  for (const entry of app.store.entriesMatching(
+    app.guildId,
+    'suggestion',
+    { needsRender: true },
+    25,
+  ))
+    await renderSuggestion(app, app.guildId, entry.key);
 }
 const active = new Set<string>();
 const label = (state: string) =>
@@ -170,15 +204,13 @@ async function updateStatus(app: App, i: Interaction, key: string, state: string
     await reply(i, 'This update is already saved.');
     return;
   }
-  item.state = state;
+  item.state = state as SuggestionState;
   item.reason = reason;
+  item.revision = (item.revision ?? 0) + 1;
+  item.needsRender = true;
   app.store.put(i.guildId!, 'suggestion', key, item);
   const thread = await threadFor(app, i.guildId!, key, item).catch(() => undefined);
-  const refreshed = await channel.messages
-    .fetch(item.message)
-    .then((message) => message.edit(modernEdit(suggestionCard(key, item, i.guildId!))))
-    .then(() => true)
-    .catch(() => false);
+  const refreshed = await renderSuggestion(app, i.guildId!, key);
   const discussed = thread
     ? await sendModern(thread, {
         content: `**Status: ${label(state)}**\n${safe(reason, 1900)}`,
@@ -196,12 +228,9 @@ async function updateStatus(app: App, i: Interaction, key: string, state: string
     'suggestion',
     linkButtons([{ label: 'View suggestion', url }]),
   );
-  await app.audit(
-    i.guildId!,
-    'admin',
-    'Suggestion updated',
-    `Suggestion ${key} · ${state}\nStaff: <@${i.user.id}>\nNotification: ${delivery}`,
-  );
+  await auditChange(app, i, 'Suggestion updated', `Status: ${state}\nNotification: ${delivery}`, {
+    footer: `Suggestion ${key}`,
+  });
   await reply(
     i,
     `Suggestion updated. DM: ${delivery}.${refreshed ? '' : ' The card could not be refreshed.'}${discussed ? '' : ' The discussion update could not be confirmed.'}`,
@@ -376,11 +405,12 @@ export const suggestions: Module = {
           allowedMentions: noMentions,
         });
         if (action === 'write')
-          await app.audit(
-            i.guildId!,
-            'admin',
+          await auditChange(
+            app,
+            i,
             'Suggestion staff reply',
-            `Suggestion ${key} · Staff: <@${i.user.id}>\nDiscussion: <#${thread.id}>`,
+            'Comment posted in the suggestion discussion.',
+            { reference: `<#${thread.id}>`, footer: `Suggestion ${key}` },
           );
         await reply(i, `Comment posted in <#${thread.id}>.`);
       }

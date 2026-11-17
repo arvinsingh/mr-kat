@@ -1,5 +1,6 @@
 import { modernMessage, modernModal, modernEdit, displayText } from './presentation.js';
 import { roleMentions } from './modules/role-mentions.js';
+import { honeypot } from './modules/honeypot.js';
 import { suggestions } from './modules/suggestions.js';
 import { logs } from './modules/logs.js';
 import { dmConversations } from './dm-conversations.js';
@@ -17,14 +18,18 @@ import { randomUUID } from 'node:crypto';
 import { ZodError } from 'zod';
 import type { App, Module, Component, Interaction } from './types.js';
 import { admin, adminConfirmation } from './modules/admin.js';
-import { moderation, moderationConfirmation } from './modules/moderation.js';
-import { roles } from './modules/roles.js';
-import { channels, lockChannel, restoreLock } from './modules/channels.js';
-import { messages, deliverEveryoneAnnouncement } from './modules/messages.js';
+import { moderation, moderationConfirmation, queueBatchNicknames } from './modules/moderation.js';
+import { roles, queueBatchRoles } from './modules/roles.js';
+import { channels, panicConfirmation } from './modules/channels.js';
+import { messages, deliverEveryoneAnnouncement, queuePurge } from './modules/messages.js';
 import { voice } from './modules/voice.js';
 import { tickets, deleteTicketChannel } from './modules/tickets.js';
+import { reports } from './modules/reports.js';
+import { verification } from './modules/verification.js';
 import { evidenceControls, moderationEvidenceMenu } from './modules/evidence.js';
-import { community } from './modules/community.js';
+import { polls } from './modules/polls.js';
+import { reminders } from './modules/reminders.js';
+import { statistics } from './modules/statistics.js';
 import { automod } from './modules/automod.js';
 import { help } from './modules/help.js';
 import { confessions } from './modules/confessions.js';
@@ -37,15 +42,16 @@ import { text, transformMenu } from './modules/text.js';
 import { setup as guidedSetup, applyGuidedSetting } from './modules/setup.js';
 import { backups } from './modules/backups.js';
 import { uwulock, clearUwuLocks, uwuContext } from './modules/uwulock.js';
-import { channelNotice } from './notices.js';
+
 import { reply, takeConfirmation, dismissPrompt, publicResponse, type Confirmation } from './ui.js';
 import { responsePath, responsePolicies, confirmationPaths } from './response-policy.js';
 import { recordChange } from './change-receipts.js';
 import { roast } from './modules/roast.js';
 import { assert, UserError, errorText, logError } from './util.js';
-import { enabled, manageableRole, requirePermission, botPermission } from './permissions.js';
+import { enabled } from './permissions.js';
 
 const features: Module[] = [
+  honeypot,
   roast,
   suggestions,
   logs,
@@ -60,7 +66,11 @@ const features: Module[] = [
   messages,
   voice,
   tickets,
-  community,
+  reports,
+  verification,
+  polls,
+  reminders,
+  statistics,
   automod,
   help,
   confessions,
@@ -74,145 +84,49 @@ const features: Module[] = [
   backups,
   uwulock,
 ];
-export const handlers = Object.assign({}, ...features.map((m) => m.commands ?? {})) as NonNullable<
-  Module['commands']
->;
+export function registerHandlers(modules: Module[]): NonNullable<Module['commands']> {
+  const commands: NonNullable<Module['commands']> = Object.create(null);
+  for (const module of modules)
+    for (const [name, handler] of Object.entries(module.commands ?? {})) {
+      assert(!commands[name], `Duplicate command handler: ${name}`);
+      commands[name] = handler;
+    }
+  return commands;
+}
+export const handlers = registerHandlers(features);
 const inFlight = new Set<string>();
+const confirmationHandlers: Record<
+  string,
+  (app: App, i: Component, pending: Confirmation) => Promise<unknown>
+> = {
+  warningPolicy: applyWarningPolicy,
+  ticketDelete: deleteTicketChannel,
+  uwuClear: clearUwuLocks,
+  cancel: async (_app, i) => reply(i, { content: 'Cancelled.', components: [] }),
+  configImport: adminConfirmation,
+  guidedSetting: applyGuidedSetting,
+  moderate: moderationConfirmation,
+  staffDM: deliverStaffDM,
+  announceEveryone: deliverEveryoneAnnouncement,
+  batchRoles: queueBatchRoles,
+  batchNicknames: queueBatchNicknames,
+  purge: queuePurge,
+  panicOn: panicConfirmation,
+  panicOff: panicConfirmation,
+};
+for (const kind of Object.keys(confirmationPaths))
+  assert(Object.hasOwn(confirmationHandlers, kind), `Missing confirmation handler: ${kind}`);
+for (const kind of Object.keys(confirmationHandlers))
+  assert(
+    kind === 'cancel' || Object.hasOwn(confirmationPaths, kind),
+    `Missing confirmation response policy: ${kind}`,
+  );
 export async function confirmation(app: App, i: Component, pending: Confirmation) {
-  if (pending.kind === 'warningPolicy') return applyWarningPolicy(app, i, pending);
-  if (pending.kind === 'ticketDelete') return deleteTicketChannel(app, i, pending);
-  if (pending.kind === 'uwuClear') {
-    await clearUwuLocks(app, i, pending);
-    return;
-  }
-  if (pending.kind === 'cancel') {
-    await reply(i, { content: 'Cancelled.', components: [] });
-    return;
-  }
-  if (pending.kind === 'configImport') {
-    await adminConfirmation(app, i, pending);
-    return;
-  }
-  if (pending.kind === 'guidedSetting') {
-    await applyGuidedSetting(app, i, pending);
-    return;
-  }
-  if (pending.kind === 'moderate') {
-    await moderationConfirmation(app, i, pending);
-    return;
-  }
-  if (pending.kind === 'staffDM') {
-    await deliverStaffDM(app, i, pending);
-    return;
-  }
-  if (pending.kind === 'announceEveryone') {
-    await deliverEveryoneAnnouncement(app, i, pending);
-    return;
-  }
-  if (pending.kind === 'batchRoles') {
-    enabled(app, i.guildId, 'roles');
-    const role = await i.guild.roles.fetch(String(pending.payload.role));
-    assert(role, 'Role no longer exists.');
-    await manageableRole(app, i, role);
-    const key = app.store.job(i.guildId, i.user.id, 'batchRoles', pending.payload);
-    await reply(i, {
-      content: `Batch queued. Use /jobs list for progress. Job: ${key}.`,
-      components: [],
-    });
-    return;
-  }
-  if (pending.kind === 'batchNicknames') {
-    enabled(app, i.guildId, 'moderation');
-    await requirePermission(app, i, P.ManageNicknames);
-    await botPermission(i.guild, P.ManageNicknames);
-    const key = app.store.job(i.guildId, i.user.id, 'batchNicknames', pending.payload);
-    await reply(i, { content: `Nickname changes queued. Job: ${key}.`, components: [] });
-    return;
-  }
-  if (pending.kind === 'purge') {
-    enabled(app, i.guildId, 'messages');
-    const channel = await i.guild.channels.fetch(String(pending.payload.channel));
-    assert(channel?.isTextBased(), 'Channel no longer available.');
-    await requirePermission(app, i, P.ManageMessages, channel);
-    await botPermission(i.guild, P.ManageMessages, channel);
-    const key = app.store.job(i.guildId, i.user.id, 'purge', pending.payload);
-    await reply(i, {
-      content: `Deletion queued. Use /jobs list for progress. Job: ${key}.`,
-      components: [],
-    });
-    return;
-  }
-  if (pending.kind === 'panicOn') {
-    enabled(app, i.guildId, 'channels');
-    await requirePermission(app, i, P.ManageGuild);
-    assert(!app.store.get(i.guildId, 'panic', 'active'), 'Panic mode is already active.');
-    const cfg = app.store.config(i.guildId);
-    const state = { channels: [] as string[], verificationPaused: cfg.verificationPaused };
-    app.store.put(i.guildId, 'panic', 'active', state);
-    cfg.verificationPaused = true;
-    app.store.setConfig(i.guildId, cfg, i.user.id);
-    for (const key of pending.payload.channels as string[]) {
-      const channel = await i.guild.channels.fetch(key);
-      assert(channel && !channel.isThread(), 'Channel no longer available.');
-      assert(
-        !app.store.get(i.guildId, 'lock', key) && !app.store.get(i.guildId, 'archive', key),
-        'A selected channel already has a lock/archive; restore it first.',
-      );
-      state.channels.push(key);
-      app.store.put(i.guildId, 'panic', 'active', state);
-      await lockChannel(app, i, channel);
-      await channelNotice(
-        app,
-        i.guildId,
-        channel.id,
-        'moderation',
-        'Panic mode is in effect',
-        `Activated at <t:${Math.floor(Date.now() / 1000)}:F>.\nIncident restrictions are active in this channel and verification is paused. Staff will post an update when panic mode ends.`,
-      );
-    }
-    await app.audit(
-      i.guildId,
-      'admin',
-      'Panic mode enabled',
-      `By <@${i.user.id}>. ${state.channels.length} channels locked.`,
-    );
-    await reply(i, 'Panic mode enabled. Use /panic off to restore changes.');
-    return;
-  }
-  if (pending.kind === 'panicOff') {
-    enabled(app, i.guildId, 'channels');
-    await requirePermission(app, i, P.ManageGuild);
-    const state = app.store.get<{ channels: string[]; verificationPaused: boolean }>(
-      i.guildId,
-      'panic',
-      'active',
-    );
-    assert(state, 'Panic mode is not active.');
-    for (const key of [...state.channels]) {
-      const channel = await i.guild.channels.fetch(key);
-      if (channel && !channel.isThread()) {
-        await requirePermission(app, i, P.ManageChannels, channel);
-        if (app.store.get(i.guildId, 'lock', key)) await restoreLock(app, channel);
-        await channelNotice(
-          app,
-          i.guildId,
-          channel.id,
-          'admin',
-          'Panic mode ended',
-          `Restored at <t:${Math.floor(Date.now() / 1000)}:F>.\nThis channel's pre-panic permissions have been restored. Other server restrictions may still apply.`,
-        );
-      }
-      state.channels = state.channels.filter((c) => c !== key);
-      app.store.put(i.guildId, 'panic', 'active', state);
-    }
-    const cfg = app.store.config(i.guildId);
-    cfg.verificationPaused = state.verificationPaused;
-    app.store.setConfig(i.guildId, cfg, i.user.id);
-    app.store.delete(i.guildId, 'panic', 'active');
-    await reply(i, 'Panic changes restored.');
-    return;
-  }
-  throw new UserError('Unknown confirmation type.');
+  const handler = Object.hasOwn(confirmationHandlers, pending.kind)
+    ? confirmationHandlers[pending.kind]
+    : undefined;
+  assert(handler, 'Unknown confirmation type.');
+  await handler(app, i, pending);
 }
 export async function route(app: App, raw: DiscordInteraction) {
   if (!raw.isRepliable()) return;

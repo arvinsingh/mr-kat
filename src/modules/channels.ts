@@ -1,13 +1,14 @@
+import { auditChange } from '../change-receipts.js';
 import {
   AttachmentBuilder,
   ChannelType,
   PermissionFlagsBits as P,
   type GuildChannel,
 } from 'discord.js';
-import type { App, Module, Interaction } from '../types.js';
+import type { App, Module, Interaction, Component } from '../types.js';
 import { assert, duration, parseIds } from '../util.js';
 import { requirePermission, botPermission, enabled } from '../permissions.js';
-import { confirm, reply } from '../ui.js';
+import { confirm, reply, type Confirmation } from '../ui.js';
 import { channelNotice } from '../notices.js';
 import { channelLabel } from '../channel-label.js';
 const lockMask =
@@ -22,7 +23,6 @@ interface SavedOverwrite {
 export interface ChannelLock {
   overwrites: SavedOverwrite[];
   actor: string;
-  slowmode: number | null;
   created: number;
 }
 export async function lockChannel(app: App, i: Interaction, channel: GuildChannel, kind = 'lock') {
@@ -60,7 +60,6 @@ export async function lockChannel(app: App, i: Interaction, channel: GuildChanne
   const record: ChannelLock = {
     overwrites: saved,
     actor: i.user.id,
-    slowmode: 'rateLimitPerUser' in channel ? Number(channel.rateLimitPerUser) : null,
     created: Date.now(),
   };
   app.store.put(i.guildId!, kind, channel.id, record);
@@ -209,12 +208,9 @@ export const channels: Module = {
       } else if (action === 'lock' || action === 'archive')
         await lockChannel(app, i, channel, action);
       else await restoreLock(app, channel, action === 'unarchive' ? 'archive' : 'lock');
-      await app.audit(
-        i.guildId,
-        'admin',
-        `Channel ${action}`,
-        `<#${channel.id}> by <@${i.user.id}>.`,
-      );
+      await auditChange(app, i, `Channel ${action}`, 'Channel permissions updated.', {
+        reference: `<#${channel.id}>`,
+      });
       const announced = await channelNotice(
         app,
         i.guildId,
@@ -261,3 +257,70 @@ export const channels: Module = {
     },
   },
 };
+
+export async function panicConfirmation(app: App, i: Component, pending: Confirmation) {
+  if (pending.kind === 'panicOn') {
+    enabled(app, i.guildId, 'channels');
+    await requirePermission(app, i, P.ManageGuild);
+    assert(!app.store.get(i.guildId, 'panic', 'active'), 'Panic mode is already active.');
+    const cfg = app.store.config(i.guildId);
+    const state = { channels: [] as string[], verificationPaused: cfg.verificationPaused };
+    app.store.put(i.guildId, 'panic', 'active', state);
+    cfg.verificationPaused = true;
+    app.store.setConfig(i.guildId, cfg, i.user.id);
+    for (const key of pending.payload.channels as string[]) {
+      const channel = await i.guild.channels.fetch(key);
+      assert(channel && !channel.isThread(), 'Channel no longer available.');
+      assert(
+        !app.store.get(i.guildId, 'lock', key) && !app.store.get(i.guildId, 'archive', key),
+        'A selected channel already has a lock/archive; restore it first.',
+      );
+      state.channels.push(key);
+      app.store.put(i.guildId, 'panic', 'active', state);
+      await lockChannel(app, i, channel);
+      await channelNotice(
+        app,
+        i.guildId,
+        channel.id,
+        'moderation',
+        'Panic mode is in effect',
+        `Activated at <t:${Math.floor(Date.now() / 1000)}:F>.\nIncident restrictions are active in this channel and verification is paused. Staff will post an update when panic mode ends.`,
+      );
+    }
+    await auditChange(app, i, 'Panic mode enabled', `${state.channels.length} channels locked.`);
+    await reply(i, 'Panic mode enabled. Use /panic off to restore changes.');
+    return;
+  }
+  assert(pending.kind === 'panicOff', 'Unknown panic action.');
+  enabled(app, i.guildId, 'channels');
+  await requirePermission(app, i, P.ManageGuild);
+  const state = app.store.get<{ channels: string[]; verificationPaused: boolean }>(
+    i.guildId,
+    'panic',
+    'active',
+  );
+  assert(state, 'Panic mode is not active.');
+  for (const key of [...state.channels]) {
+    const channel = await i.guild.channels.fetch(key);
+    if (channel && !channel.isThread()) {
+      await requirePermission(app, i, P.ManageChannels, channel);
+      if (app.store.get(i.guildId, 'lock', key)) await restoreLock(app, channel);
+      await channelNotice(
+        app,
+        i.guildId,
+        channel.id,
+        'admin',
+        'Panic mode ended',
+        `Restored at <t:${Math.floor(Date.now() / 1000)}:F>.\nThis channel's pre-panic permissions have been restored. Other server restrictions may still apply.`,
+      );
+    }
+    state.channels = state.channels.filter((c) => c !== key);
+    app.store.put(i.guildId, 'panic', 'active', state);
+  }
+  const cfg = app.store.config(i.guildId);
+  cfg.verificationPaused = state.verificationPaused;
+  app.store.setConfig(i.guildId, cfg, i.user.id);
+  app.store.delete(i.guildId, 'panic', 'active');
+  await reply(i, 'Panic changes restored.');
+  return;
+}

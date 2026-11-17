@@ -2,20 +2,13 @@ import { incomingDM } from './dm-conversations.js';
 import { refreshSticky } from './sticky.js';
 import { ticketChannelDeleted } from './ticket-categories.js';
 import { roleMentionReply } from './role-mentions.js';
-import { memberAvatarChanged, userAvatarChanged } from './member-logs.js';
-import {
-  Events,
-  PermissionFlagsBits as P,
-  AuditLogEvent,
-  type Message,
-  type GuildMember,
-} from 'discord.js';
+import { captureMemberChanges, memberAvatarChanged, userAvatarChanged } from './member-logs.js';
+import { Events, PermissionFlagsBits as P, AuditLogEvent, type Message } from 'discord.js';
 import type { App } from './types.js';
-import { logError, safe, safeMentions, renderTemplate } from './util.js';
+import { logError, safe, renderTemplate } from './util.js';
 import { SpamDetector } from './spam.js';
 import { checkHierarchy } from './permissions.js';
 import { send } from './discord.js';
-import { noMentions } from './ui.js';
 import { voiceEvent } from './modules/voice.js';
 import {
   messageUpdated,
@@ -30,6 +23,10 @@ import { channelNotice } from './notices.js';
 import { mentionReply } from './mention-replies.js';
 import { replyTextCommand } from './modules/text.js';
 import { uwuMessage } from './uwulock.js';
+import { honeypotMessage } from './honeypot.js';
+import { memberDeparted, banObserved, observeModerationAudit } from './moderation-events.js';
+import { caseDelivery } from './case-log.js';
+import { logProfile } from './log-profile.js';
 import {
   syncStarboard,
   removeStarboardMessage,
@@ -100,7 +97,8 @@ export function events(app: App) {
           app.guildId,
           'members',
           'Member joined',
-          `<@${member.id}> · Account created <t:${Math.floor(member.user.createdTimestamp / 1000)}:R>.`,
+          `Account created <t:${Math.floor(member.user.createdTimestamp / 1000)}:R>.`,
+          { profile: logProfile(app, member.id, member, member.user, true) },
         );
         await onboardMember(app, member, true);
         if (cfg.modules.automod) {
@@ -122,7 +120,8 @@ export function events(app: App) {
               app.guildId,
               'automod',
               'New account joined',
-              `<@${member.id}> has an account younger than ${cfg.automod.youngAccountDays} days.`,
+              `Account younger than ${cfg.automod.youngAccountDays} days.`,
+              { profile: logProfile(app, member.id, member) },
             );
         }
       });
@@ -132,12 +131,7 @@ export function events(app: App) {
       run('member leave', async () => {
         const cfg = app.store.config(app.guildId);
         if (cfg.modules.stats) app.store.count(app.guildId, 'leaves');
-        await app.audit(
-          app.guildId,
-          'members',
-          'Member left',
-          `${safe(member.user.tag)} (${member.id}).`,
-        );
+        memberDeparted(app, member);
         if (cfg.modules.onboarding) {
           const roles = member.roles.cache
             .filter(
@@ -163,29 +157,18 @@ export function events(app: App) {
       });
   });
   app.client.on(Events.GuildMemberUpdate, (old, member) => {
-    if (member.guild.id === app.guildId)
+    if (member.guild.id === app.guildId) {
+      const change = captureMemberChanges(app, old, member);
       run('member update', async () => {
-        if (old.pending && !member.pending) await onboardMember(app, member);
         await memberAvatarChanged(app, old, member);
-        const added = member.roles.cache.filter((r) => !old.partial && !old.roles.cache.has(r.id)),
-          removed = old.roles.cache.filter((r) => !old.partial && !member.roles.cache.has(r.id));
-        for (const role of removed.values())
-          app.store.delete(app.guildId, 'roleTimer', `${member.id}:${role.id}`);
-        if (added.size || removed.size)
-          await app.audit(
-            app.guildId,
-            'members',
-            'Member roles changed',
-            `<@${member.id}>\nAdded: ${added.map((r) => `<@&${r.id}> · ${safe(r.name, 100)}`).join(', ') || 'none'}\nRemoved: ${removed.map((r) => `<@&${r.id}> · ${safe(r.name, 100)}`).join(', ') || 'none'}`,
-          );
-        if (old.nickname !== member.nickname)
-          await app.audit(
-            app.guildId,
-            'members',
-            'Nickname changed',
-            `<@${member.id}>: ${safe(old.nickname ?? old.user.username)} → ${safe(member.nickname ?? member.user.username)}`,
-          );
+        if (old.pending && !member.pending) await onboardMember(app, member);
+        if (change.nickname)
+          await app.audit(app.guildId, 'members', 'Nickname changed', change.nickname, {
+            profile: change.profile,
+            dividers: true,
+          });
       });
+    }
   });
   app.client.on(Events.UserUpdate, (old, user) =>
     run('profile picture update', () => userAvatarChanged(app, old, user)),
@@ -193,45 +176,20 @@ export function events(app: App) {
   app.client.on(Events.GuildBanRemove, (ban) => {
     if (ban.guild.id === app.guildId) {
       app.store.delete(app.guildId, 'banGeneration', ban.user.id);
-      run('ban removed log', () =>
-        app.audit(
-          app.guildId,
-          'moderation',
-          'Ban removed',
-          `${safe(ban.user.tag)} (${ban.user.id})`,
-        ),
-      );
+      banObserved(app, ban.user.id, 'unban');
     }
   });
   app.client.on(Events.GuildBanAdd, (ban) => {
-    if (ban.guild.id === app.guildId)
-      run('ban log', () =>
-        app.audit(
-          app.guildId,
-          'moderation',
-          'Member banned',
-          `${safe(ban.user.tag)} (${ban.user.id})`,
-        ),
-      );
+    if (ban.guild.id === app.guildId) banObserved(app, ban.user.id, 'ban');
   });
   app.client.on(Events.VoiceStateUpdate, (old, next) => {
     if (next.guild.id === app.guildId) run('voice event', () => voiceEvent(app, old, next));
-  });
-  app.client.on(Events.ChannelCreate, (channel) => {
-    if (!channel.isDMBased() && channel.guild.id === app.guildId)
-      run('channel created log', () =>
-        app.audit(app.guildId, 'admin', 'Channel created', `${safe(channel.name)} (${channel.id})`),
-      );
   });
   app.client.on(Events.ChannelDelete, (channel) => {
     if (!channel.isDMBased() && channel.guild.id === app.guildId)
       run('ticket channel deleted', () => ticketChannelDeleted(app, channel));
     if (!channel.isDMBased() && channel.guild.id === app.guildId)
       run('starboard channel deleted', () => starboardChannelChanged(app, channel.id, true));
-    if (!channel.isDMBased() && channel.guild.id === app.guildId)
-      run('channel deleted log', () =>
-        app.audit(app.guildId, 'admin', 'Channel deleted', `${safe(channel.name)} (${channel.id})`),
-      );
   });
   app.client.on(Events.ChannelUpdate, (old, channel) => {
     if (
@@ -241,68 +199,12 @@ export function events(app: App) {
       channelSettingChanges(old, channel).length
     )
       run('starboard channel changed', () => starboardChannelChanged(app, channel.id));
-    if (!channel.isDMBased() && channel.guild.id === app.guildId)
-      run('channel updated log', async () => {
-        if (old.isDMBased()) return;
-        const changes = channelSettingChanges(old, channel);
-        if (!changes.length) return;
-        await app.audit(
-          app.guildId,
-          'admin',
-          'Channel updated',
-          `${safe(old.name)} → ${safe(channel.name)} (${channel.id})\nChanged settings: ${changes.join(', ')}`,
-        );
-      });
-  });
-  app.client.on(Events.GuildRoleCreate, (role) => {
-    if (role.guild.id === app.guildId)
-      run('role created', () =>
-        app.audit(
-          app.guildId,
-          'admin',
-          'Role created',
-          `<@&${role.id}> · ${safe(role.name)} (${role.id})`,
-        ),
-      );
-  });
-  app.client.on(Events.GuildRoleDelete, (role) => {
-    if (role.guild.id === app.guildId)
-      run('role deleted', () =>
-        app.audit(app.guildId, 'admin', 'Role deleted', `${safe(role.name)} (${role.id})`),
-      );
-  });
-  app.client.on(Events.GuildRoleUpdate, (old, role) => {
-    if (role.guild.id === app.guildId)
-      run('role updated', () =>
-        app.audit(
-          app.guildId,
-          'admin',
-          'Role updated',
-          `<@&${role.id}> · ${safe(old.name)} → ${safe(role.name)}\nPermissions: ${old.permissions.bitfield} → ${role.permissions.bitfield}`,
-        ),
-      );
-  });
-  app.client.on(Events.WebhooksUpdate, (channel) => {
-    if (channel.guild.id === app.guildId)
-      run('webhooks changed', () =>
-        app.audit(
-          app.guildId,
-          'admin',
-          'Webhooks changed',
-          `<#${channel.id}>. Inspect the Discord audit log for details.`,
-        ),
-      );
   });
   app.client.on(Events.GuildAuditLogEntryCreate, (entry, guild) => {
     if (guild.id === app.guildId)
       run('audit event', async () => {
+        observeModerationAudit(app, entry);
         if (entry.executorId === app.client.user!.id) return;
-        await app.audit(
-          app.guildId,
-          'admin',
-          'Discord audit event',
-          `Action ${entry.action} · Actor: ${entry.executorId ? `<@${entry.executorId}>` : 'unknown'} · Target: ${entry.targetId ?? 'unknown'}${entry.reason ? `\nReason: ${safeMentions(entry.reason)}` : ''}`,
-        );
         if (
           ![
             AuditLogEvent.ChannelDelete,
@@ -322,7 +224,8 @@ export function events(app: App) {
             app.guildId,
             'automod',
             'Suspicious administrative activity',
-            `Five sensitive actions within 30 seconds by ${entry.executorId ? `<@${entry.executorId}>` : 'an unknown actor'}. Review immediately. This alert does not roll changes back.`,
+            'Five sensitive actions within 30 seconds. Review immediately. This alert does not roll changes back.',
+            { profile: entry.executorId ? logProfile(app, entry.executorId) : undefined },
           );
         if (adminBursts.size > 500)
           for (const [k, v] of adminBursts)
@@ -336,13 +239,24 @@ export function events(app: App) {
           app.guildId,
           'automod',
           'Native AutoMod action',
-          `Rule ${event.ruleId} · User <@${event.userId}> · Action ${event.action.type}.`,
+          `Rule: ${safe(event.guild.autoModerationRules?.cache.get(event.ruleId)?.name ?? 'AutoMod rule')}\nAction: ${event.action.type === 1 ? 'Message blocked' : event.action.type === 2 ? 'Alert sent' : event.action.type === 3 ? 'Member timed out' : event.action.type === 4 ? 'Interaction blocked' : 'Action ' + event.action.type}`,
+          {
+            profile: logProfile(app, event.userId),
+            footer: `Rule ${event.ruleId}`,
+            reference:
+              event.messageId && event.channelId
+                ? `https://discord.com/channels/${app.guildId}/${event.channelId}/${event.messageId}`
+                : event.channelId
+                  ? `<#${event.channelId}>`
+                  : undefined,
+          },
         ),
       );
   });
 }
 async function messageCreate(app: App, message: Message) {
   if (!message.guild) return;
+  if (await honeypotMessage(app, message)) return;
   await refreshSticky(app, message).catch((error) => logError('sticky refresh', error));
   if (message.author.bot || message.webhookId) return;
   const cfg = app.store.config(message.guild.id);
@@ -355,7 +269,11 @@ async function messageCreate(app: App, message: Message) {
   if (
     cfg.modules.logging &&
     cfg.snapshotDays > 0 &&
-    !messageLogExcludedChannel(cfg, message.channelId)
+    !messageLogExcludedChannel(
+      cfg,
+      message.channelId,
+      message.channel && 'parentId' in message.channel ? message.channel.parentId : undefined,
+    )
   )
     app.store.snapshot(
       message.guild.id,
@@ -390,12 +308,16 @@ async function messageCreate(app: App, message: Message) {
       );
       if (reason) {
         spamDetected = true;
-        await app.audit(
-          message.guild.id,
-          'automod',
-          `Spam detected · ${cfg.automod.mode}`,
-          `<@${member.id}> in <#${message.channelId}>: ${reason}`,
-        );
+        if (detector.shouldAlert(message.guild.id, member.id, Date.now()))
+          await app
+            .audit(
+              message.guild.id,
+              'automod',
+              `Spam detected · ${cfg.automod.mode}`,
+              `Reason: ${reason}`,
+              { profile: logProfile(app, member.id, member), reference: message.url },
+            )
+            .catch((error) => logError('automod alert', error));
         if (cfg.automod.mode !== 'report') {
           const me = await message.guild.members.fetchMe();
           const botAsActor = me;
@@ -426,12 +348,21 @@ async function messageCreate(app: App, message: Message) {
               reason,
             );
             app.store.count(message.guild.id, 'moderation');
-            await app.audit(
+            const url = await app.audit(
               message.guild.id,
               'moderation',
               `Automatic action #${caseId}`,
-              `<@${member.id}> · ${reason}`,
+              `Reason: ${reason}\nMessage deleted: ${deleted ? 'yes' : 'no'}${timedOut ? `\nTimeout: ${cfg.automod.timeoutMinutes} minutes\nMember DM: pending` : ''}`,
+              {
+                profile: logProfile(app, member.id, member),
+                reference: deleted ? `<#${message.channelId}>` : message.url,
+              },
             );
+            if (timedOut)
+              app.store.put(app.guildId, 'caseLog', String(caseId), {
+                url: url || undefined,
+                delivery: 'pending',
+              });
             await channelNotice(
               app,
               message.guild.id,
@@ -440,8 +371,8 @@ async function messageCreate(app: App, message: Message) {
               `Automatic action #${caseId}`,
               `Member: <@${member.id}>\nTime: <t:${Math.floor(Date.now() / 1000)}:F>\nReason: ${safe(reason)}\nMessage deleted: ${deleted ? 'yes' : 'no'}${timedOut ? `\nTimeout: ${cfg.automod.timeoutMinutes} minutes.` : ''}`,
             );
-            if (timedOut)
-              await moderationNotice(
+            if (timedOut) {
+              const delivery = await moderationNotice(
                 app,
                 message.guild.id,
                 message.guild.name,
@@ -449,7 +380,10 @@ async function messageCreate(app: App, message: Message) {
                 'automatic timeout',
                 `Spam protection: ${reason}`,
                 `Case #${caseId}. Duration: ${cfg.automod.timeoutMinutes} minutes. Use /appeal case:${caseId} reason:YOUR_REASON in the server to appeal.`,
+                false,
               );
+              await caseDelivery(app, caseId, delivery);
+            }
           } catch (error) {
             logError('automod enforcement', error);
           }

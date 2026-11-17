@@ -36,3 +36,16 @@ export const defaultMentionResponses = [
   'Hello. I’ve paused staring meaningfully at the server status.',
   'I live here, I work here, and apparently I answer the door too.',
 ];
+
+export const roleMentionResponses = [
+  'The council has been paged. The support desk has a much better filing system.',
+  'You rang? Please take a ticket; it is considerably quieter than a role ping.',
+  'The staff summoning ritual has been intercepted by a very polite bot.',
+  'That role is not a doorbell. Luckily, we do have a support desk.',
+  'One ticket beats a chorus of pings. Let us keep the summoning circle tidy.',
+  'The emergency staff bat-signal is taking a tea break. Support is the way to go.',
+  'Your quest for assistance has a designated starting point: the support desk.',
+  'A wild staff ping appeared! Please redirect your quest to support.',
+  'The help queue accepts details, not decibels. A ticket will do nicely.',
+  'The team is easier to reach with a ticket than with a megaphone.',
+];

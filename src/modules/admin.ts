@@ -1,3 +1,4 @@
+import { auditChange } from '../change-receipts.js';
 import { AttachmentBuilder, PermissionFlagsBits as P } from 'discord.js';
 import { configSchema, logKinds, modules, type LogKind, type GuildConfig } from '../config.js';
 import type { App, Command, Module, Interaction } from '../types.js';
@@ -7,7 +8,7 @@ import { assert, safe } from '../util.js';
 import { textChannel } from '../discord.js';
 import type { ChangeReceipt } from '../change-receipts.js';
 import { setupPanel, validateSelection } from './setup.js';
-import type { HealthTopic } from '../setup-health.js';
+import type { HealthTopic } from '../setup-settings.js';
 import { validateRoastConfig } from '../roast-setup.js';
 
 export async function validateConfig(app: App, i: Interaction, cfg: GuildConfig): Promise<void> {
@@ -159,18 +160,22 @@ export async function adminConfirmation(
   pending: Confirmation,
 ): Promise<void> {
   owner(i);
+  assert(
+    Number.isInteger(pending.payload.revision),
+    'This settings preview is outdated. Run the command again.',
+  );
   const cfg = configSchema.parse(pending.payload.config);
   await validateConfig(app, i, cfg);
   const previous = app.store.config(i.guildId!);
   const changed = (Object.keys(cfg) as (keyof GuildConfig)[]).filter(
     (key) => JSON.stringify(previous[key]) !== JSON.stringify(cfg[key]),
   );
-  app.store.setConfig(i.guildId!, cfg, i.user.id);
-  await app.audit(
-    i.guildId!,
-    'admin',
+  app.store.setConfig(i.guildId!, cfg, i.user.id, Number(pending.payload.revision));
+  await auditChange(
+    app,
+    i,
     'Configuration updated',
-    `Updated by <@${i.user.id}>.\nChanged settings: ${changed.join(', ') || 'no differences'}.`,
+    `Changed settings: ${changed.join(', ') || 'no differences'}.`,
     { force: true },
   );
   await reply(i, 'Configuration saved.');
@@ -179,6 +184,7 @@ async function config(app: App, i: Command) {
   owner(i);
   const action = i.options.getSubcommand();
   const cfg = app.store.config(i.guildId);
+  const revision = app.store.configRevision(i.guildId);
   if (action === 'show' || action === 'export') {
     await reply(i, {
       files: [
@@ -222,7 +228,7 @@ async function config(app: App, i: Command) {
       i,
       'Replace the current server settings with the attached configuration?',
       'configImport',
-      { config: parsed },
+      { config: parsed, revision },
     );
     return;
   }
@@ -242,11 +248,12 @@ async function config(app: App, i: Command) {
     await validateConfig(app, i, parsed);
     await confirm(app, i, `Change ${safe(key)} to the supplied JSON value?`, 'configImport', {
       config: parsed,
+      revision,
     });
     return;
   }
   await validateConfig(app, i, cfg);
-  app.store.setConfig(i.guildId, cfg, i.user.id);
+  app.store.setConfig(i.guildId, cfg, i.user.id, revision);
   await reply(i, 'Settings saved.');
 }
 export const admin: Module = {
@@ -346,10 +353,7 @@ export const admin: Module = {
         await reply(i, 'Cancellation requested. Completed changes are not undone.');
         return;
       }
-      const jobs = app.store
-        .jobs(i.guildId, 100)
-        .filter((j) => isStaff || j.actor === i.user.id)
-        .slice(0, 15);
+      const jobs = app.store.jobs(i.guildId, 15, isStaff ? undefined : i.user.id);
       await reply(
         i,
         jobs

@@ -8,7 +8,7 @@ import {
   ActionRowBuilder,
   type GuildTextBasedChannel,
 } from 'discord.js';
-import type { App, Module, Interaction } from '../types.js';
+import type { App, Module, Interaction, Component } from '../types.js';
 import { randomUUID } from 'node:crypto';
 import { requirePermission, botPermission, enabled } from '../permissions.js';
 import { assert, duration, safe, UserError } from '../util.js';
@@ -342,3 +342,16 @@ export const messages: Module = {
     return true;
   },
 };
+
+export async function queuePurge(app: App, i: Component, pending: Confirmation) {
+  enabled(app, i.guildId, 'messages');
+  const channel = await i.guild.channels.fetch(String(pending.payload.channel));
+  assert(channel?.isTextBased(), 'Channel no longer available.');
+  await requirePermission(app, i, P.ManageMessages, channel);
+  await botPermission(i.guild, P.ManageMessages, channel);
+  const key = app.store.job(i.guildId, i.user.id, 'purge', pending.payload);
+  await reply(i, {
+    content: `Deletion queued. Use /jobs list for progress. Job: ${key}.`,
+    components: [],
+  });
+}

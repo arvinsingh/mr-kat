@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { defaultMentionResponses } from './mention-responses.js';
-import { roleMentionResponses } from './role-mentions.js';
+import { defaultMentionResponses, roleMentionResponses } from './mention-responses.js';
 
 export const id = z.string().regex(/^\d{17,22}$/, 'Expected a Discord ID');
 export const modules = [
@@ -44,6 +43,15 @@ export const configSchema = z
     staffRoles: z.array(id).max(10).default([]),
     excludedChannels: z.array(id).max(100).default([]),
     stickyDelayMinutes: z.number().int().min(1).max(1440).default(10),
+    honeypot: z
+      .object({
+        enabled: z.boolean().default(false),
+        channel: id.optional(),
+        cleanupMinutes: z.number().int().min(1).max(10080).default(30),
+        timeoutDays: z.number().int().min(1).max(28).default(28),
+        spoiler: z.boolean().default(true),
+      })
+      .default(() => ({ enabled: false, cleanupMinutes: 30, timeoutDays: 28, spoiler: true })),
     selfRoles: z.array(id).max(25).default([]),
     restoreRoles: z.array(id).max(25).default([]),
     rolePrerequisites: z.record(id, id).default({}),
@@ -201,7 +209,12 @@ export const configSchema = z
         attachmentLimit: z.number().int().min(2).max(50).default(10),
         blockInvites: z.boolean().default(false),
         blockedDomains: z
-          .array(z.string().regex(/^[a-z0-9.-]+$/i))
+          .array(
+            z
+              .string()
+              .regex(/^[a-z0-9.-]+$/i)
+              .transform((domain) => domain.toLowerCase()),
+          )
           .max(100)
           .default([]),
         exemptRoles: z.array(id).max(25).default([]),

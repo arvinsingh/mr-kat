@@ -1,10 +1,19 @@
+import { auditChange } from '../change-receipts.js';
 import { sendModern } from '../presentation.js';
+import { logProfile } from '../log-profile.js';
 import { ActionRowBuilder, StringSelectMenuBuilder, PermissionFlagsBits as P } from 'discord.js';
 import { randomUUID } from 'node:crypto';
-import type { App, Module, Interaction, Command } from '../types.js';
-import { enabled, manageableRole, safeRole, botPermission } from '../permissions.js';
+import type { App, Module, Interaction, Component } from '../types.js';
+import {
+  enabled,
+  manageableRole,
+  safeRole,
+  botPermission,
+  requirePermission,
+} from '../permissions.js';
 import { assert, duration, parseIds, safe } from '../util.js';
-import { confirm, reply, noMentions } from '../ui.js';
+import { confirm, reply, noMentions, type Confirmation } from '../ui.js';
+import { parseBatchRoles } from '../batch-request.js';
 import { destination } from '../discord.js';
 
 export interface RoleTimer {
@@ -55,6 +64,7 @@ export const roles: Module = {
       const action = i.options.getSubcommand();
       if (action === 'menu') {
         const channel = await destination(app, i, i.options.getChannel('channel', true).id);
+        await requirePermission(app, i, P.ManageRoles, channel);
         const cfg = app.store.config(i.guildId);
         assert(cfg.selfRoles.length, 'Configure selfRoles first using /config set.');
         const options = [];
@@ -115,11 +125,12 @@ export const roles: Module = {
         app.store.delete(i.guildId, 'roleTimer', `${target.id}:${role.id}`);
       }
       app.store.addCase(i.guildId, i.user.id, target.id, `role:${action}`, `${role.id}: ${reason}`);
-      await app.audit(
-        i.guildId,
-        'admin',
+      await auditChange(
+        app,
+        i,
         `Role ${action}`,
-        `<@${i.user.id}> changed <@&${fetched.id}> · ${safe(fetched.name)} for <@${target.id}>. ${safe(reason, Infinity)}`,
+        `Role: <@&${fetched.id}>\nStaff: <@${i.user.id}>\nReason: ${safe(reason, Infinity)}`,
+        { profile: logProfile(app, target.id, undefined, target) },
       );
       await reply(i, 'Role updated.');
     },
@@ -169,6 +180,8 @@ export const roles: Module = {
       const has = member.roles.cache.has(roleId);
       const key = `${member.id}:${roleId}`;
       if (selected.has(roleId) && !has) {
+        const previous = app.store.get<RoleTimer>(i.guildId, 'roleTimer', key);
+        let generation: string | undefined;
         if (cfg.selfRoleExpiryMinutes) {
           const timer = {
             generation: randomUUID(),
@@ -176,10 +189,22 @@ export const roles: Module = {
             role: roleId,
             target: member.id,
           };
+          generation = timer.generation;
           app.store.put(i.guildId, 'roleTimer', key, timer);
           app.store.job(i.guildId, i.user.id, 'roleExpire', { ...timer }, timer.expires);
         }
-        await member.roles.add(roleId, 'Self-service role panel');
+        try {
+          await member.roles.add(roleId, 'Self-service role panel');
+        } catch (error) {
+          if (
+            generation &&
+            app.store.get<RoleTimer>(i.guildId, 'roleTimer', key)?.generation === generation
+          ) {
+            if (previous) app.store.put(i.guildId, 'roleTimer', key, previous);
+            else app.store.delete(i.guildId, 'roleTimer', key);
+          }
+          throw error;
+        }
       }
       if (!selected.has(roleId) && has) {
         await member.roles.remove(roleId, 'Self-service role panel');
@@ -190,3 +215,16 @@ export const roles: Module = {
     return true;
   },
 };
+
+export async function queueBatchRoles(app: App, i: Component, pending: Confirmation) {
+  enabled(app, i.guildId, 'roles');
+  const payload = parseBatchRoles(pending.payload);
+  const role = await i.guild.roles.fetch(payload.role);
+  assert(role, 'Role no longer exists.');
+  await manageableRole(app, i, role);
+  const key = app.store.job(i.guildId, i.user.id, 'batchRoles', payload);
+  await reply(i, {
+    content: `Batch queued. Use /jobs list for progress. Job: ${key}.`,
+    components: [],
+  });
+}

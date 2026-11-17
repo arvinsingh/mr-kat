@@ -1,3 +1,4 @@
+import { auditChange } from '../change-receipts.js';
 import {
   ActionRowBuilder,
   AttachmentBuilder,
@@ -12,10 +13,10 @@ import { readOnlyResponse, reply } from '../ui.js';
 import {
   createVerifiedBackup,
   verifyLocalBackup,
-  listBackups,
   recoveryGuide,
   type BackupState,
 } from '../backup-health.js';
+import { listBackups } from '../backup-files.js';
 
 export async function backupPanel(app: App, i: Interaction, notice = '') {
   owner(i);
@@ -76,11 +77,11 @@ export const backups: Module = {
       const action = i.options.getString('action') ?? 'panel';
       if (action === 'create') {
         const checked = await createVerifiedBackup(app);
-        await app.audit(
-          i.guildId,
-          'admin',
+        await auditChange(
+          app,
+          i,
           'Verified backup created',
-          `Requested by <@${i.user.id}>. File: ${checked.file}. Integrity/schema/server/checksum checks passed.`,
+          `File: ${checked.file}. Integrity/schema/server/checksum checks passed.`,
           { force: true },
         );
         await backupPanel(app, i, `✅ Created and verified ${safe(checked.file)}.`);
@@ -114,11 +115,11 @@ export const backups: Module = {
     owner(i);
     if (action === 'create') {
       const checked = await createVerifiedBackup(app);
-      await app.audit(
-        i.guildId,
-        'admin',
+      await auditChange(
+        app,
+        i,
         'Verified backup created',
-        `Requested by <@${i.user.id}>. File: ${checked.file}. Verification passed.`,
+        `File: ${checked.file}. Verification passed.`,
         { force: true },
       );
       await backupPanel(app, i, `✅ Created and verified ${safe(checked.file)}.`);

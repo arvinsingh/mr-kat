@@ -6,7 +6,7 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import type { App, Interaction, Module } from '../types.js';
-import { findTopic, manualText, indexText, splitPages, type Audience } from '../manual.js';
+import { findTopic, manualText, indexText, splitPages, topics, type Audience } from '../manual.js';
 import { guideMarkdown } from '../guides.js';
 import { assert } from '../util.js';
 import { reply } from '../ui.js';
@@ -50,46 +50,35 @@ async function show(i: Interaction, path: string, group: Audience | 'all', page:
             })),
           ),
       ),
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(`help:${i.user.id}:topic:${group}`)
-          .setPlaceholder('Explore a feature')
-          .addOptions(
-            [
-              'help',
-              'ticket',
-              'confess',
-              'warnings',
-              'voice',
-              'role',
-              'poll',
-              'suggest',
-              'text',
-              'announce',
-              'say',
-              'report',
-              'appeal',
-              'onboarding',
-              'starboard',
-              'automod',
-              'mentionguard',
-              'mod',
-              'backup',
-              'diagnose',
-              'config',
-              'heartbeat',
-              'uwulock',
-              'remind',
-            ]
-              .filter((value) => findTopic(value))
-              .map((value) => ({ label: `/${value}`, value })),
-          ),
-      ),
+      ...featureMenus(i.user.id, group),
       row,
     ],
   });
 }
-async function command(app: App, i: Parameters<NonNullable<Module['commands']>[string]>[1]) {
+function featureMenus(actor: string, group: Audience | 'all') {
+  const roots = topics.filter((topic) => !topic.path.includes(' '));
+  const menus: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
+  for (let offset = 0; offset < roots.length; offset += 25)
+    menus.push(
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`help:${actor}:topic:${group}${offset ? ':' + offset : ''}`)
+          .setPlaceholder(
+            `Explore a feature · ${Math.floor(offset / 25) + 1}/${Math.ceil(roots.length / 25)}`,
+          )
+          .addOptions(
+            roots.slice(offset, offset + 25).map((topic) => ({
+              label: '/' + topic.path,
+              value: topic.path,
+              description: topic.description.slice(0, 100),
+            })),
+          ),
+      ),
+    );
+  return menus;
+}
+
+async function command(_app: App, i: Parameters<NonNullable<Module['commands']>[string]>[1]) {
   const guide = i.commandName === 'help' ? i.options.getString('guide') : null;
   if (guide) {
     assert(guide === 'members' || guide === 'moderators' || guide === 'owners', 'Unknown guide.');

@@ -21,10 +21,10 @@ import {
 import type { App, Module, Interaction } from '../types.js';
 import { requirePermission, botPermission, enabled, manageableMember } from '../permissions.js';
 import { assert, safe, logError, errorText } from '../util.js';
-import { embed, reply, noMentions } from '../ui.js';
+import { reply, noMentions } from '../ui.js';
 import { missingChannel, textChannel, send } from '../discord.js';
-import { channelNotice } from '../notices.js';
 import { channelLabel } from '../channel-label.js';
+import { logProfile } from '../log-profile.js';
 export interface VoiceRoom {
   owner: string;
   name?: string;
@@ -34,6 +34,23 @@ export interface VoiceRoom {
   permitted: string[];
 }
 const busy = new Set<string>();
+interface VoiceTransfer {
+  origin: string;
+  lobby: string;
+  at: number;
+  target?: string;
+  finished: boolean;
+  observed: boolean;
+}
+const transfers = new WeakMap<App, Map<string, VoiceTransfer>>();
+function logMovement(app: App, state: VoiceState, from: string, to: string, at: number) {
+  void app
+    .audit(state.guild.id, 'voice', 'Voice movement', `${from} → ${to}`, {
+      at,
+      profile: logProfile(app, state.id, state.member),
+    })
+    .catch((error) => logError('voice movement log', error));
+}
 
 const guildPermissions: [string, bigint][] = [
   ['Manage Channels', P.ManageChannels],
@@ -132,7 +149,13 @@ async function creationFailed(app: App, state: VoiceState, error: unknown) {
   app.store.put(state.guild.id, 'voiceFailureNotice', state.id, { until: Date.now() + 30000 });
   const description = `Could not create a voice room for <@${state.id}>. ${safe(errorText(error), 700)}\nUse /voice status to inspect setup and permissions.`;
   await Promise.allSettled([
-    app.audit(state.guild.id, 'admin', 'Voice room creation failed', description),
+    app.audit(
+      state.guild.id,
+      'admin',
+      'Voice room creation failed',
+      `${safe(errorText(error), 700)}\nUse /voice status to inspect setup and permissions.`,
+      { profile: logProfile(app, state.id, state.member) },
+    ),
     ...(state.member
       ? [
           sendModern(state.member, {
@@ -258,17 +281,38 @@ async function postVoiceControls(app: App, channel: VoiceChannel, room: VoiceRoo
 export async function voiceEvent(app: App, oldState: VoiceState, next: VoiceState) {
   const guild = next.guild;
   const cfg = app.store.config(guild.id);
+  const at = Date.now();
+  let flows = transfers.get(app);
+  if (!flows) transfers.set(app, (flows = new Map()));
+  for (const [id, flow] of flows) if (at - flow.at > 30000) flows.delete(id);
+  const prior = flows.get(next.id);
+  const internalMove =
+    oldState.channelId !== next.channelId &&
+    prior &&
+    !prior.observed &&
+    oldState.channelId === prior.lobby &&
+    next.channelId === prior.target;
+  if (internalMove) {
+    prior.observed = true;
+    if (prior.finished) flows.delete(next.id);
+  }
+  const creating =
+    cfg.modules.voice &&
+    oldState.channelId !== next.channelId &&
+    next.channelId === cfg.voiceLobby &&
+    next.member &&
+    !next.member.user.bot;
+  const profile = creating ? logProfile(app, next.id, next.member) : undefined;
+  const origin = oldState.channelId
+    ? channelLabel(oldState.channelId, oldState.channel?.name)
+    : 'disconnected';
+  const arrival = next.channelId
+    ? channelLabel(next.channelId, next.channel?.name)
+    : 'disconnected';
   if (oldState.channelId !== next.channelId) {
     // Logging is independent: a slow or unavailable log channel must not block
     // moving a member or cleaning up an empty room.
-    void app
-      .audit(
-        guild.id,
-        'voice',
-        'Voice movement',
-        `<@${next.id}>: ${oldState.channelId ? channelLabel(oldState.channelId, oldState.channel?.name) : 'disconnected'} → ${next.channelId ? channelLabel(next.channelId, next.channel?.name) : 'disconnected'}`,
-      )
-      .catch((error) => logError('voice movement log', error));
+    if (!creating && !internalMove) logMovement(app, next, origin, arrival, at);
     if (cfg.modules.stats) {
       const connected = app.store.get<{ since: number }>(guild.id, 'voiceActivity', next.id);
       if (connected)
@@ -285,29 +329,58 @@ export async function voiceEvent(app: App, oldState: VoiceState, next: VoiceStat
   if (!cfg.modules.voice) return;
   // Mute/deafen/stream changes are not joins and must never provision another room.
   if (oldState.channelId === next.channelId) return;
-  if (oldState.channel?.type === ChannelType.GuildVoice && oldState.channelId !== next.channelId) {
-    const room = app.store.get<VoiceRoom>(guild.id, 'voiceRoom', oldState.channel.id);
-    if (room && !busy.has(oldState.channel.id)) {
-      busy.add(oldState.channel.id);
-      try {
-        if (!oldState.channel.members.size) await removeRoom(app, oldState.channel, room);
-        else await syncCompanion(app, oldState.channel, room);
-      } finally {
-        busy.delete(oldState.channel.id);
+  try {
+    if (
+      oldState.channel?.type === ChannelType.GuildVoice &&
+      oldState.channelId !== next.channelId
+    ) {
+      const room = app.store.get<VoiceRoom>(guild.id, 'voiceRoom', oldState.channel.id);
+      if (room && !busy.has(oldState.channel.id)) {
+        busy.add(oldState.channel.id);
+        try {
+          if (!oldState.channel.members.size) await removeRoom(app, oldState.channel, room);
+          else await syncCompanion(app, oldState.channel, room);
+        } finally {
+          busy.delete(oldState.channel.id);
+        }
       }
     }
-  }
-  if (next.channelId) {
-    const room = app.store.get<VoiceRoom>(guild.id, 'voiceRoom', next.channelId);
-    if (room && next.channel?.type === ChannelType.GuildVoice) {
-      if (room.blocked.includes(next.id)) await next.disconnect('Blocked from this managed room');
-      else await syncCompanion(app, next.channel, room);
+    if (next.channelId) {
+      const room = app.store.get<VoiceRoom>(guild.id, 'voiceRoom', next.channelId);
+      if (room && next.channel?.type === ChannelType.GuildVoice) {
+        if (room.blocked.includes(next.id)) await next.disconnect('Blocked from this managed room');
+        else await syncCompanion(app, next.channel, room);
+      }
     }
+  } catch (error) {
+    if (creating) logMovement(app, next, origin, arrival, at);
+    throw error;
   }
   if (next.channelId !== cfg.voiceLobby || !next.member || next.member.user.bot) return;
   const key = `create:${guild.id}:${next.id}`;
   if (busy.has(key)) return;
   busy.add(key);
+  const transfer: VoiceTransfer = {
+    origin,
+    lobby: next.channelId!,
+    at,
+    finished: false,
+    observed: false,
+  };
+  flows.set(next.id, transfer);
+  const joined = (channel: VoiceChannel, fresh: boolean) => {
+    transfer.finished = true;
+    if (transfer.observed) flows.delete(next.id);
+    void app
+      .audit(
+        guild.id,
+        'voice',
+        fresh ? 'Temporary voice room created' : 'Temporary voice room joined',
+        `${transfer.origin !== 'disconnected' ? `From: ${transfer.origin}\n` : ''}Room: ${channelLabel(channel.id, channel.name)}`,
+        { at, profile },
+      )
+      .catch((error) => logError('voice room log', error));
+  };
   let created: VoiceChannel | undefined;
   try {
     const owned = app.store
@@ -316,7 +389,9 @@ export async function voiceEvent(app: App, oldState: VoiceState, next: VoiceStat
     if (owned) {
       const existing = await guild.channels.fetch(owned.key).catch(missingChannel);
       if (existing?.type === ChannelType.GuildVoice) {
+        transfer.target = existing.id;
         await next.setChannel(existing, 'Return to existing room');
+        joined(existing, false);
         return;
       }
       if (!existing) {
@@ -390,7 +465,9 @@ export async function voiceEvent(app: App, oldState: VoiceState, next: VoiceStat
     };
     app.store.put(guild.id, 'voiceRoom', created.id, room);
     if (next.member.voice.channelId === cfg.voiceLobby) {
+      transfer.target = created.id;
       await next.member.voice.setChannel(created, 'Join-to-create');
+      joined(created, true);
       await postVoiceControls(app, created, room);
       if (cfg.voiceNoticeChannel)
         await send(app, guild.id, cfg.voiceNoticeChannel, {
@@ -413,6 +490,10 @@ export async function voiceEvent(app: App, oldState: VoiceState, next: VoiceStat
         await removeRoom(app, created, room).catch((e) => logError('voice rollback', e));
     }
   } finally {
+    if (!transfer.finished) {
+      flows.delete(next.id);
+      logMovement(app, next, transfer.origin, arrival, at);
+    }
     busy.delete(key);
   }
 }

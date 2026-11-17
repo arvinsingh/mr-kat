@@ -1,17 +1,25 @@
 import type { Message, PartialMessage } from 'discord.js';
 import type { GuildConfig } from './config.js';
 import type { App } from './types.js';
-import { safe, safeMentions } from './util.js';
+import { safe } from './util.js';
+import { logText } from './log-format.js';
+import { logProfile } from './log-profile.js';
 import { isPurgeDeletion } from './purge.js';
 import { isUwuDeletion } from './uwulock.js';
 
 type ObservedMessage = Message | PartialMessage;
 type Snapshot = ReturnType<App['store']['message']>;
 
-export function messageLogExcludedChannel(cfg: GuildConfig, channel: string): boolean {
+export function messageLogExcludedChannel(
+  cfg: GuildConfig,
+  channel: string,
+  parent?: string | null,
+): boolean {
   // A partial delete/update can have no author. Excluding every log destination also
   // breaks feedback loops after cache eviction, restarts, and retention cleanup.
-  return cfg.excludedChannels.includes(channel) || Object.values(cfg.logs).includes(channel);
+  return [channel, parent].some(
+    (id) => !!id && (cfg.excludedChannels.includes(id) || Object.values(cfg.logs).includes(id)),
+  );
 }
 
 function ignored(app: App, cfg: GuildConfig, ...messages: ObservedMessage[]): boolean {
@@ -19,7 +27,7 @@ function ignored(app: App, cfg: GuildConfig, ...messages: ObservedMessage[]): bo
     !cfg.modules.logging ||
     messages.some(
       (message) =>
-        messageLogExcludedChannel(cfg, message.channelId) ||
+        messageLogExcludedChannel(cfg, message.channelId, parentChannel(app, message)) ||
         message.author?.bot ||
         message.author?.id === app.client.user?.id ||
         Boolean(message.webhookId) ||
@@ -30,16 +38,48 @@ function ignored(app: App, cfg: GuildConfig, ...messages: ObservedMessage[]): bo
   );
 }
 
-function identity(app: App, message: ObservedMessage, previous?: Snapshot, old?: ObservedMessage) {
-  const user =
-    message.author ??
-    old?.author ??
-    (previous ? app.client.users.cache.get(previous.author) : undefined);
+function parentChannel(app: App, message: ObservedMessage) {
+  const channel = message.channel ?? app.client.channels?.cache?.get(message.channelId);
+  return channel && 'parentId' in channel ? channel.parentId : undefined;
+}
+function identity(
+  app: App,
+  message: ObservedMessage,
+  previous?: Snapshot,
+  old?: ObservedMessage,
+  deleted = false,
+) {
+  const user = message.author ?? old?.author;
   const userId = user?.id ?? previous?.author;
-  const author = userId
-    ? `${user ? `${safe(user.tag || user.username, 120)} · ` : ''}<@${userId}> (ID: ${userId})`
-    : 'Unavailable — this message was not cached or previously stored.';
-  return `Author: ${author}\nChannel: <#${message.channelId}>\nMessage ID: ${message.id}\nMessage reference: https://discord.com/channels/${app.guildId}/${message.channelId}/${message.id}`;
+  return {
+    profile: logProfile(app, userId, message.member ?? old?.member, user),
+    reference: deleted
+      ? `<#${message.channelId}>`
+      : `https://discord.com/channels/${app.guildId}/${message.channelId}/${message.id}`,
+  };
+}
+function files(message: ObservedMessage) {
+  return [...(message.attachments?.values() ?? [])]
+    .map((file) => `[${safe(file.name ?? file.id, 150)}](<${file.url}>)`)
+    .join('\n');
+}
+function attachmentChanges(old: Message, message: Message) {
+  const added = [...message.attachments.values()].filter((file) => !old.attachments.has(file.id));
+  const removed = [...old.attachments.values()].filter((file) => !message.attachments.has(file.id));
+  const changed = [...message.attachments.values()].filter((file) => {
+    const previous = old.attachments.get(file.id);
+    return previous && (previous.name !== file.name || previous.description !== file.description);
+  });
+  const list = (items: typeof added) =>
+    items.map((file) => `[${safe(file.name ?? file.id, 150)}](<${file.url}>)`).join('\n');
+  return [
+    '**Attachments changed**',
+    added.length ? 'Added:\n' + list(added) : '',
+    removed.length ? 'Removed:\n' + list(removed) : '',
+    changed.length ? 'Updated:\n' + list(changed) : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function attachments(message: Message): string {
@@ -85,7 +125,20 @@ export async function messageUpdated(app: App, old: ObservedMessage, message: Ob
     app.guildId,
     'messages',
     'Message edited',
-    `${identity(app, message, previous, old)}\nBefore: ${before === undefined ? 'Unavailable (message was not cached or stored).' : safeMentions(before || '[No text]')}\nAfter: ${after === null ? 'Unavailable.' : safeMentions(after || '[No text]')}${attachmentsChanged ? '\nAttachments changed.' : ''}`,
+    [
+      contentChanged || uncachedEdit
+        ? `Before: ${before === undefined ? 'Unavailable (message was not cached or stored).' : logText(before || '[No text]')}\n---\nAfter: ${after === null ? 'Unavailable.' : logText(after || '[No text]')}`
+        : '',
+      attachmentsChanged ? attachmentChanges(old as Message, message as Message) : '',
+    ]
+      .filter(Boolean)
+      .join('\n---\n'),
+    {
+      ...identity(app, message, previous, old),
+      at: message.editedTimestamp ?? Date.now(),
+      dividers: true,
+      source: { channel: message.channelId, message: message.id, author: authorId },
+    },
   );
 }
 
@@ -101,7 +154,16 @@ export async function messageDeleted(app: App, message: ObservedMessage) {
     app.guildId,
     'messages',
     'Message deleted',
-    `${identity(app, message, previous)}\nContent: ${content === undefined ? 'Unavailable (message was not cached or stored).' : safeMentions(content || '[No text]')}`,
+    `Content: ${content === undefined ? 'Unavailable (message was not cached or stored).' : logText(content || '[No text]')}${files(message) ? '\n---\nAttachments:\n' + files(message) : ''}`,
+    {
+      ...identity(app, message, previous, undefined, true),
+      dividers: true,
+      source: {
+        channel: message.channelId,
+        message: message.id,
+        author: message.author?.id ?? previous?.author,
+      },
+    },
   );
 }
 
@@ -122,16 +184,15 @@ export async function messagesBulkDeleted(
   if (!eligible.length) return;
   const details = eligible.map(({ message, previous }) => {
     const authorId = message.author?.id ?? previous?.author;
-    const name = message.author
-      ? `${safe(message.author.tag || message.author.username, 80)} · `
-      : '';
     const content = message.content ?? previous?.content;
-    return `Message ID: ${message.id} · Author: ${name}${authorId ? `<@${authorId}> (ID: ${authorId})` : 'unavailable'}\nContent: ${content === undefined ? 'Unavailable (message was not cached or stored).' : safeMentions(content || '[No text]')}`;
+    const name = logProfile(app, authorId, message.member, message.author).name;
+    return `**${safe(name, 200)}:** ${content === undefined ? 'Unavailable (message was not cached or stored).' : logText(content || '[No text]')}${files(message) ? '\nAttachments:\n' + files(message) : ''}`;
   });
   await app.audit(
     app.guildId,
     'messages',
     'Messages bulk deleted',
-    `${eligible.length} member messages deleted in <#${channelId}>.\n${details.join('\n\n')}`,
+    `${eligible.length} member messages deleted.\n---\n${details.join('\n---\n')}`,
+    { dividers: true, reference: `<#${channelId}>` },
   );
 }

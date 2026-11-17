@@ -1,6 +1,5 @@
 import {
   ApplicationCommandOptionType as T,
-  PermissionFlagsBits as P,
   PermissionsBitField,
   type APIApplicationCommandOption,
 } from 'discord.js';
@@ -22,6 +21,24 @@ interface Overview {
   notes: string[];
 }
 const overviews: Record<string, Overview> = {
+  honeypot: {
+    purpose:
+      'Catch accounts posting in the warning channel, timeout them, and delete their recent server messages.',
+    examples: [
+      '/honeypot setup',
+      '/honeypot setup cleanup_minutes:30 timeout_days:28 spoiler:true',
+      '/honeypot status',
+      '/honeypot release incident:INCIDENT_ID',
+      '/honeypot disable',
+      '/config set key:honeypot.cleanupMinutes value:60',
+    ],
+    notes: [
+      'Setup/disable are owner-only. Setup creates #honeypot and a permanent Components V2 warning. Ordinary members can post there, but doing so triggers enforcement. The spoiler entry notice includes the warning topic; it does not guarantee a spam account will enter. Bots, webhooks, system messages, administrators, owner, native moderators, configured staffRoles and protectedRoles are exempt.',
+      'The bot needs Manage Channels for setup, Moderate Members, and a role above targets. Configure a private moderation log first. Cleanup needs View Channel, Read Message History and Manage Messages in each destination. The automod, moderation and messages modules must be on. Default timeout is 28 days (Discord maximum), default cleanup is 30 minutes; cleanup_minutes supports 1–10080 minutes. Config keys: honeypot.cleanupMinutes, honeypot.timeoutDays and honeypot.spoiler. Rerun setup to update spoiler marking.',
+      'Timeout is attempted immediately. A durable job fetches history across accessible text/announcement/voice chats and threads, including discovered archived threads, and queues author-only purges with full retained private purge logs. Pins and configured excluded channels/parents are skipped. The incident fixes its time window; later messages after that window are not removed. Permissions, missing channels and uncertain deletions are reported. Interrupted timeout attempts are not retried; inspection can resume after restart. Already delivered notifications cannot be recalled. Any legitimate messages in the same window are deleted too; deletion cannot be undone.',
+      'Private incidents include the trigger, timeout result, cleanup progress and a staff-only Release timeout button. /honeypot release also works if the card was deleted. Releasing stops pending cleanup and clears only the timeout applied by that incident; a different newer timeout is preserved. /honeypot disable stops detection/pending cleanup and updates the warning, without removing existing timeouts or deleting the channel. No automatic timeout renewal, bans, kicks, hidden author lookup or paid service.',
+    ],
+  },
   roast: {
     purpose:
       'Post a random roast, choose your participation preference, or suggest a reusable line for public staff approval.',
@@ -46,6 +63,11 @@ const overviews: Record<string, Overview> = {
       'Create the private Bot Logs category and all missing log channels, including a separate DM inbox.',
     examples: ['/logs setup', '/logs setup category:Bot Logs', '/logs status'],
     notes: [
+      '/logs status and /diagnose → Logging show queue depth, delivered/failed/partially delivered/dropped records, grouped warning count and the last delivery issue. Counters survive restarts; queued bodies are not replayed. Each record’s pages stay together per destination, with moderation/report/security events ahead of waiting ordinary logs. Log links do not create previews or pings.',
+      'All eight log categories, staff DM records and honeypot incident cards share a small round avatar/nickname header, then the action, native reference and relevant content. The person concerned is the header subject; private staff attribution appears once. System/anonymous events use the bot identity. Voice titles retain their existing size. Names fall back to display name/username or Unknown member using event data and existing caches, without extra profile lookups or stored pictures. On the same line as the action, edits/transformations use raw Discord message URLs for native channel-style jump links; deletions use only the native channel mention because the original is gone. No View message labels or repeated plain channel names appear in these references. No reference buttons are used. Before/After text is separated by a divider. Role/nickname/profile logs omit repeated user mentions; join/departure headings retain a clickable mention. Full available content and attachment changes remain visible; numeric source IDs stay in internal metadata. Log/excluded channel threads inherit their parent exclusion. All event logs use native embed author headers; feature panels retain Components V2. Case/job/report IDs are compact footers. Author edits/deletes of transformed posts, verification, ordinary voice movement, moderation, tickets and reports use the same style.',
+      'Role changes are captured immediately and grouped after about three quiet seconds, capped at ten seconds. Titles distinguish added, removed and mixed/reversed changes. This brief buffer uses memory and flushes during graceful shutdown; an abrupt crash can lose pending event logs. Join-to-create combines lobby entry and the bot transfer into one room record, with a small round avatar/nickname header and the Temporary voice room created/joined title. From: disconnected is omitted; a real source channel remains visible. Other movements and failed creation remain logged.',
+      'Routine Discord audit/channel/role/webhook copies are omitted. Bot setting/command receipts, failure notices and suspicious admin-burst alerts remain. Known kick/ban/unban gateway duplicates are suppressed only after matching a bot audit marker and recorded case; View Audit Log is needed, and unmatched events remain visible. Case cards include DM outcomes and update their native embeds in place; retained V2 case cards remain editable. Ticket closure combines creator, staff, reason, transcript and DM results. Honeypot evidence and live status have distinct records; new full error details are logged once as diagnostics. Incident Release controls work on both retained V2 and new native cards.',
+      'Sensitive moderation, report, admin, AutoMod and DM destinations are checked for non-staff access before delivery. Incorrectly public destinations stop delivery and appear in health checks. Identical short failure notices share a card for one minute, with repeat counts updated at most about every ten seconds; different contexts remain separate. No per-event verbosity switches were added.',
       'Setup is owner-only and requires bot Manage Channels and Manage Roles. Existing private channels under the chosen category are reused; rerunning creates only missing channels. Other channels are not moved or deleted. Configured staff roles get access; administrators and the owner retain native access. With no staff roles configured, only the owner/administrators and bot see newly created logs.',
       'The separate bot-dms channel contains one staff thread per user. Users converse in their own DMs; staff use the thread’s Reply button or /dm reply. Ordinary staff thread messages remain internal. Confession notifications and personal reminders are excluded. Previously combined /setup logs destinations affect event logs only and preserve the DM inbox.',
     ],
@@ -163,7 +185,7 @@ const overviews: Record<string, Overview> = {
       'Staff read retained receipts for successful moderation, configuration and other administrative changes, even after dismissing their private acknowledgement.',
     examples: ['/changes', '/changes limit:20'],
     notes: [
-      'Requires Manage Server and the staff allowlist. Receipts are stored for retentionDays and copied to the configured admin log even when event logging is disabled. Configure that private channel with /setup or /config log. Command arguments, file contents, DM bodies and anonymous submission identities are not copied. Confirmation previews and cancelled actions create no receipt. Existing public posts, private reports and tickets keep their own records.',
+      'Requires Manage Server and the staff allowlist. Receipts are stored for retentionDays even when event logging is disabled. A confirmed detailed admin log replaces its redundant generic completion copy; missing/failed detailed delivery keeps the generic admin fallback. Configure that private channel with /setup or /config log. Command arguments, file contents, DM bodies and anonymous submission identities are not copied. Confirmation previews and cancelled actions create no receipt. Existing public posts, private reports and tickets keep their own records.',
     ],
   },
   starboard: {
@@ -228,6 +250,7 @@ const overviews: Record<string, Overview> = {
     notes: [
       'Values for set must be valid JSON, including quotes around string IDs.',
       'set/import require confirmation. Exported IDs must exist in this server; bot authority is checked.',
+      'Settings previews use a saved revision. If settings change before you confirm, the old preview is rejected rather than overwriting newer changes. Run the command again to review the latest settings.',
       'staffRoles is an additional allowlist, not a source of Discord permissions.',
       'stickyDelayMinutes is the server-wide sticky inactivity timer: 1–1440 whole minutes, default 10. Example: /config set key:stickyDelayMinutes value:5, then confirm. It applies to all stickies, including existing ones. Pending deadlines are recalculated from the last activity, not restarted when the setting changes.',
       'Mention replies default on with 36 built-in lines. Set mentionReplies to {"enabled":true,"commandsChannel":"CHANNEL_ID"} to add a normal text commands-channel destination, or {"enabled":false} to disable the feature. Replace CHANNEL_ID with its numeric ID and confirm. The messages module also controls this feature. A missing or inaccessible destination falls back to /help.',
@@ -470,6 +493,7 @@ const overviews: Record<string, Overview> = {
     notes: [
       'The owner first runs /suggest setup channel:#suggestions. All suggestions go to that destination. The card keeps the original author ID and display name after every decision. States: open, under_review, needs_info, accepted, in_progress, implemented, declined.',
       'The title includes the current status. Comment opens the discussion thread directly; type normally to reply under your own name. Staff can instead use Reply as bot inside the thread (Manage Messages plus staff allowlist). Review is staff-only and opens a status/reason form. Every status update attempts an author DM with a suggestion link; needs_info asks for more details. Blocked DMs do not undo saved decisions. The bot needs Create Public Threads and Send Messages in Threads. Old Comment controls open a thread link and refresh the card.',
+      'If a status card cannot refresh, the decision stays saved and maintenance retries the card on startup and hourly. Repairing the card does not send duplicate status DMs.',
     ],
   },
   remind: {
@@ -649,7 +673,7 @@ const overviews: Record<string, Overview> = {
     examples: ['/easteregg', '/config set key:easterEggText value:"Your own secret message"'],
     notes: [
       'Members can trigger it where both they and the bot can post; the community module must be enabled.',
-      'The server owner changes easterEggText with /config set and confirms the change. The footer remains Mr. Kat even when the text changes.',
+      'The server owner changes easterEggText with /config set and confirms the change. The Mr. Kat footer stays unchanged.',
       'There is no command cooldown. Mentions do not ping. The command acknowledgement is private; the Easter egg post is public.',
     ],
   },
@@ -682,6 +706,8 @@ const memberPaths = new Set([
   'voice panel',
 ]);
 const ownerPaths = new Set([
+  'honeypot setup',
+  'honeypot disable',
   'roast setup',
   'logs setup',
   'suggest setup',

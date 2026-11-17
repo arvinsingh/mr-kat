@@ -9,24 +9,18 @@ import {
 import type { App } from './types.js';
 import { safe, errorText } from './util.js';
 import { privileged } from './permissions.js';
-import { listBackups, type BackupState } from './backup-health.js';
+import type { BackupState } from './backup-health.js';
+import { listBackups } from './backup-files.js';
 import { logKinds } from './config.js';
 import { uwuDeliveryIssues } from './uwulock.js';
-
-export const healthTopics = [
-  'overview',
-  'logging',
-  'moderation',
-  'roles',
-  'voice',
-  'tickets',
-  'onboarding',
-  'confessions',
-  'community',
-  'automation',
-  'backups',
-] as const;
-export type HealthTopic = (typeof healthTopics)[number];
+import { honeypotLog } from './honeypot.js';
+import { logHealth, logHealthText } from './logging.js';
+import {
+  setupSettings,
+  healthTextChannels,
+  postingPermissions,
+  type HealthTopic,
+} from './setup-settings.js';
 export interface HealthItem {
   status: 'ok' | 'warn' | 'error' | 'off';
   name: string;
@@ -105,6 +99,21 @@ export async function checkSetup(
         'This destination is in excludedChannels. Relevant message/feature processing may be disabled here.',
       );
   };
+  const settingChannel = (
+    key: string,
+    name: string,
+    id: string | undefined,
+    privateOnly = false,
+  ) => {
+    const setting = setupSettings[key]!;
+    return channel(
+      name,
+      id,
+      setting.healthTypes ?? setting.types!,
+      setting.healthPermissions ?? setting.permissions!,
+      privateOnly,
+    );
+  };
   const role = async (name: string, id: string, automated: boolean) => {
     try {
       const found = await guild.roles.fetch(id);
@@ -145,8 +154,8 @@ export async function checkSetup(
     );
     return true;
   };
-  const text = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
-  const posting = [P.ViewChannel, P.SendMessages, P.EmbedLinks];
+  const text = healthTextChannels;
+  const posting = postingPermissions;
   if (topic === 'overview') {
     add('ok', 'Connected server', `Server ID ${guild.id}. Bot role: <@&${me.roles.highest.id}>.`);
     add(
@@ -181,17 +190,18 @@ export async function checkSetup(
       'Open Backups to check verified copies. Off-host copying is not verified by this bot.',
     );
   } else if (topic === 'logging') {
+    const delivery = logHealth(app);
+    add(
+      delivery.failed || delivery.dropped ? 'warn' : 'ok',
+      'Log delivery health',
+      logHealthText(app),
+    );
     if (!disabled('logging')) {
       for (const kind of logKinds)
-        await channel(
+        await settingChannel(
+          kind === 'dm' ? 'logs.dm' : 'logs',
           `${kind} log`,
           cfg.logs[kind],
-          kind === 'dm' ? [ChannelType.GuildText] : text,
-          [
-            ...posting,
-            P.ReadMessageHistory,
-            ...(kind === 'dm' ? [P.CreatePublicThreads, P.SendMessagesInThreads] : []),
-          ],
           true,
         );
       add(
@@ -209,6 +219,13 @@ export async function checkSetup(
         P.ManageMessages,
       ]);
       add(
+        me.permissions.has(P.ViewAuditLog) ? 'ok' : 'warn',
+        'Moderation event matching',
+        me.permissions.has(P.ViewAuditLog)
+          ? 'Native bot-action markers can be matched to cases to avoid duplicate ban/kick notices.'
+          : 'Grant View Audit Log for reliable bot-action matching. Unmatched native events remain visible.',
+      );
+      add(
         'warn',
         'Role hierarchy',
         'Bot AND acting staff must be above each target. The server owner, bot, protected roles and peers cannot be moderated by these commands. Administrator does not bypass hierarchy.',
@@ -220,6 +237,34 @@ export async function checkSetup(
         'Members receive best-effort DMs; channel notices remain. Use staff-only command channels for sensitive reasons.',
       );
       if (cfg.modules.automod) needed('Native AutoMod management', [P.ManageGuild]);
+      if (cfg.honeypot.enabled) {
+        needed('Honeypot setup', [P.ManageChannels, P.ModerateMembers, P.ManageMessages]);
+        await channel(
+          'Honeypot channel',
+          cfg.honeypot.channel,
+          [ChannelType.GuildText],
+          [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.ManageMessages],
+        );
+        const armed =
+          cfg.honeypot.channel &&
+          app.store.get<{ armed: boolean }>(guild.id, 'honeypotChannel', cfg.honeypot.channel)
+            ?.armed;
+        add(
+          armed && cfg.modules.automod && cfg.modules.messages ? 'ok' : 'error',
+          'Honeypot detection',
+          armed && cfg.modules.automod && cfg.modules.messages
+            ? `Timeout ${cfg.honeypot.timeoutDays} days; cleanup ${cfg.honeypot.cleanupMinutes} minutes. Staff/protected roles are exempt. Check per-channel history/delete permissions for cleanup coverage.`
+            : 'Run /honeypot setup and enable automod, moderation and messages.',
+        );
+        await honeypotLog(app)
+          .then(() => add('ok', 'Honeypot incident privacy', 'Moderation log is private to staff.'))
+          .catch((error) => add('error', 'Honeypot incident privacy', errorText(error)));
+      } else
+        add(
+          'off',
+          'Honeypot',
+          'Optional spam trap. The owner can create its warning channel with /honeypot setup.',
+        );
       add(
         cfg.automod.mode === 'report' ? 'warn' : 'ok',
         'Bot spam detector',
@@ -260,28 +305,14 @@ export async function checkSetup(
   } else if (topic === 'voice') {
     if (!disabled('voice')) {
       needed('Voice management', [P.ManageChannels, P.ManageRoles, P.MoveMembers]);
-      await channel(
-        'Join-to-create lobby',
-        cfg.voiceLobby,
-        [ChannelType.GuildVoice],
-        [P.ViewChannel, P.Connect, P.MoveMembers],
-      );
-      await channel(
-        'Room category',
-        cfg.voiceCategory,
-        [ChannelType.GuildCategory],
-        [
-          P.ViewChannel,
-          P.ManageChannels,
-          P.ManageRoles,
-          P.Connect,
-          P.SendMessages,
-          P.EmbedLinks,
-          P.ReadMessageHistory,
-        ],
-      );
+      await settingChannel('voiceLobby', 'Join-to-create lobby', cfg.voiceLobby);
+      await settingChannel('voiceCategory', 'Room category', cfg.voiceCategory);
       if (cfg.voiceNoticeChannel)
-        await channel('Creation notice channel', cfg.voiceNoticeChannel, text, posting);
+        await settingChannel(
+          'voiceNoticeChannel',
+          'Creation notice channel',
+          cfg.voiceNoticeChannel,
+        );
       add(
         'ok',
         'Member flow',
@@ -291,12 +322,7 @@ export async function checkSetup(
   } else if (topic === 'tickets') {
     if (!disabled('tickets')) {
       needed('Private ticket channels', [P.ManageChannels, P.ManageRoles]);
-      await channel(
-        'Support panel channel',
-        cfg.supportChannel,
-        [ChannelType.GuildText],
-        [...posting, P.ReadMessageHistory],
-      );
+      await settingChannel('supportChannel', 'Support panel channel', cfg.supportChannel);
       add(
         'ok',
         'Ticket category lifecycle',
@@ -318,16 +344,20 @@ export async function checkSetup(
   } else if (topic === 'onboarding') {
     if (!disabled('onboarding')) {
       if (cfg.welcomeChannel)
-        await channel('Departure/public welcome destination', cfg.welcomeChannel, text, posting);
+        await settingChannel(
+          'welcomeChannel',
+          'Departure/public welcome destination',
+          cfg.welcomeChannel,
+        );
       else
         add(
           'off',
           'Public join/exit destination',
           'No destination configured. Native public welcomes can still be used.',
         );
-      if (cfg.rulesChannel) await channel('Rules link', cfg.rulesChannel, text, [P.ViewChannel]);
+      if (cfg.rulesChannel) await settingChannel('rulesChannel', 'Rules link', cfg.rulesChannel);
       if (cfg.introductionChannel)
-        await channel('Introduction link', cfg.introductionChannel, text, [P.ViewChannel]);
+        await settingChannel('introductionChannel', 'Introduction link', cfg.introductionChannel);
       if (cfg.rolesSource === 'channel')
         await channel('Role-selection link', cfg.rolesChannel, text, [P.ViewChannel]);
       add(
@@ -409,12 +439,7 @@ export async function checkSetup(
           'Built-in roasts work without a submission board. Select a public board in /roast setup to accept custom lines.',
         );
       if (cfg.suggestionChannel)
-        await channel(
-          'Suggestions destination',
-          cfg.suggestionChannel,
-          [ChannelType.GuildText],
-          [...posting, P.ReadMessageHistory, P.CreatePublicThreads, P.SendMessagesInThreads],
-        );
+        await settingChannel('suggestionChannel', 'Suggestions destination', cfg.suggestionChannel);
       else add('warn', 'Suggestions destination', 'Run /suggest setup channel:#suggestions.');
       const locks = app.store
         .entries<{ channel: string; expires: number }>(app.guildId, 'uwuLock', 1000)
@@ -459,12 +484,7 @@ export async function checkSetup(
         );
       }
       if (cfg.starboard.enabled)
-        await channel(
-          'Starboard destination',
-          cfg.starboard.channel,
-          [ChannelType.GuildText],
-          [...posting, P.ReadMessageHistory],
-        );
+        await settingChannel('starboard.channel', 'Starboard destination', cfg.starboard.channel);
       else add('off', 'Starboard', 'Not enabled. Use /starboard setup to publish ⭐ highlights.');
       add(
         cfg.textEffects.enabled ? 'ok' : 'off',
@@ -479,21 +499,15 @@ export async function checkSetup(
         'Explicit mentions can get witty text replies. The messages module must be on.',
       );
       if (cfg.mentionReplies.commandsChannel)
-        await channel(
+        await settingChannel(
+          'mentionReplies.commandsChannel',
           'Commands-channel link',
           cfg.mentionReplies.commandsChannel,
-          [ChannelType.GuildText],
-          [P.ViewChannel],
         );
     }
   } else if (topic === 'automation') {
     if (cfg.heartbeat.enabled)
-      await channel(
-        'Heartbeat destination',
-        cfg.heartbeat.channel,
-        [ChannelType.GuildText],
-        posting,
-      );
+      await settingChannel('heartbeat.channel', 'Heartbeat destination', cfg.heartbeat.channel);
     else
       add(
         'off',

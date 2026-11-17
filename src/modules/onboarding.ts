@@ -1,4 +1,5 @@
 import { modernEdit } from '../presentation.js';
+import { logProfile } from '../log-profile.js';
 import { PermissionFlagsBits as P, type GuildMember, type ButtonInteraction } from 'discord.js';
 import type { App, Module } from '../types.js';
 import type { GuildConfig } from '../config.js';
@@ -32,11 +33,6 @@ export async function onboardingDestinations(member: GuildMember, cfg: GuildConf
       lines.push({ label: label!, url: `https://discord.com/channels/${member.guild.id}/${id}` });
   }
   return lines;
-}
-export async function onboardingLinks(member: GuildMember, cfg: GuildConfig): Promise<string> {
-  return (await onboardingDestinations(member, cfg))
-    .map(({ label, url }) => `[${label}](${url})`)
-    .join(' · ');
 }
 export async function onboardingButtons(member: GuildMember, cfg: GuildConfig) {
   const links = await onboardingDestinations(member, cfg);
@@ -186,7 +182,8 @@ export async function onboardMember(app: App, member: GuildMember, joining = fal
         member.guild.id,
         'admin',
         'Onboarding needs attention',
-        `<@${member.id}>\n${progress.errors.map((e) => safe(e, 160)).join('\n')}`,
+        progress.errors.map((e) => safe(e, 160)).join('\n'),
+        { profile: logProfile(app, member.id, member) },
       );
   } finally {
     active.delete(key);
@@ -199,7 +196,15 @@ export async function reconcileOnboarding(app: App) {
     'onboardingPending',
     1000,
   )) {
-    const member = await guild.members.fetch(entry.key).catch(() => null);
+    let member: GuildMember;
+    try {
+      member = await guild.members.fetch(entry.key);
+    } catch (error) {
+      // Only a confirmed departure retires pending work; transport failures must retry.
+      if ((error as { code?: number }).code === 10007)
+        app.store.delete(app.guildId, 'onboardingPending', entry.key);
+      continue;
+    }
     if (!member || member.joinedTimestamp !== entry.data.joined)
       app.store.delete(app.guildId, 'onboardingPending', entry.key);
     else if (!member.pending) await onboardMember(app, member);

@@ -7,21 +7,11 @@ import {
 import type { App } from './types.js';
 import { missingChannel } from './discord.js';
 import { assert } from './util.js';
-
-const queues = new WeakMap<App, Map<string, Promise<unknown>>>();
+import { serial } from './concurrency.js';
 
 // Creation and cleanup share a guild lock so an empty-category check cannot race a new ticket.
-export async function withTicketCategoryLock<T>(app: App, guild: Guild, work: () => Promise<T>) {
-  let queue = queues.get(app);
-  if (!queue) queues.set(app, (queue = new Map()));
-  const previous = queue.get(guild.id) ?? Promise.resolve();
-  const current = previous.catch(() => undefined).then(work);
-  queue.set(guild.id, current);
-  try {
-    return await current;
-  } finally {
-    if (queue.get(guild.id) === current) queue.delete(guild.id);
-  }
+export function withTicketCategoryLock<T>(app: App, guild: Guild, work: () => Promise<T>) {
+  return serial(app, `ticket-category:${guild.id}`, work);
 }
 
 function remember(app: App, guild: Guild, id: string) {
@@ -119,9 +109,15 @@ export async function reconcileTicketCategories(app: App, guild: Guild) {
 }
 
 export async function ticketChannelDeleted(app: App, channel: GuildBasedChannel) {
-  app.store.delete(channel.guild.id, 'ticket', channel.id);
-  if (channel.type === ChannelType.GuildCategory) forget(app, channel.guild, channel.id);
   const cfg = app.store.config(channel.guild.id);
-  if (cfg.ticketCategory || app.store.entries(channel.guild.id, 'ticketCategory').length)
+  const tracked = !!app.store.get(channel.guild.id, 'ticket', channel.id);
+  const categoryIds = new Set([
+    cfg.ticketCategory,
+    ...app.store.entries(channel.guild.id, 'ticketCategory').map((entry) => entry.key),
+  ]);
+  app.store.delete(channel.guild.id, 'ticket', channel.id);
+  if (channel.type === ChannelType.GuildCategory && categoryIds.has(channel.id))
+    forget(app, channel.guild, channel.id);
+  if (tracked || categoryIds.has(channel.id) || categoryIds.has(channel.parentId ?? ''))
     await reconcileTicketCategories(app, channel.guild);
 }

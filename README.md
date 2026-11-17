@@ -7,11 +7,12 @@ Run your own Discord application for one configured server per instance.
 ## Features
 
 - **Moderation:** guided warning panels, warning revocation and configurable escalation, message evidence, appeals, reports, timeouts, kicks, bans, batch operations, lockdown, and panic mode.
-- **Logs and protection:** paginated purge records, message edits/deletions, avatar/role/channel/voice changes, protected-role mention redirects, spam controls, and native Discord AutoMod setup.
+- **Logs and protection:** consistent avatar/name headers, full purge records, message edits/deletions, grouped role changes, member/voice logs, protected-role mention redirects, spam controls, and native Discord AutoMod setup.
+- **Honeypot:** a marked do-not-post channel that detects spam accounts, applies a configurable timeout, and cleans up their recent messages across channels. Staff can review incidents and release timeouts.
 - **Roles and onboarding:** self-service role menus, temporary and automatic roles, optional welcome DMs, exit messages, and verification.
 - **Voice and support:** join-to-create voice rooms with ownership controls; integrated ticket panels, staff-only reopen/delete controls, and closure-summary/transcript DMs.
 - **Community:** anonymous confessions with threaded replies and DM notifications, starboard, polls, suggestions, reminders, announcements, plain channel messages, and saved tags.
-- **Fun:** text effects, reply shortcuts, mention responses, a customizable Easter egg, and temporary server-wide or channel-specific UwU locks.
+- **Fun:** text effects, reply shortcuts, mention responses, a customizable Easter egg, temporary UwU locks, and roasts with opt-outs and staff-reviewed custom lines.
 - **Operations:** interactive setup, permission/health checks, heartbeat posts, persistent jobs, verified backups, and offline recovery tools.
 
 Features require their relevant Discord permissions and configuration. Confessions and other destination-based features need setup before use. Read [the command guide](docs/COMMANDS.md), or use `/help` and `/man` inside Discord.

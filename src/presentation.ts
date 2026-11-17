@@ -33,6 +33,28 @@ export function displayText(value: unknown): string {
     .join('\n');
 }
 
+// Read the generated footer block, rather than a matching line inside user-supplied text.
+export function hasMessageFooter(
+  message: Pick<Message, 'embeds' | 'components'>,
+  marker: string,
+): boolean {
+  if (message.embeds.some((embed) => embed.footer?.text === marker)) return true;
+  const prefix = `-# ${marker}`;
+  return message.components.some((component) => {
+    const node = json(component);
+    if (node.type !== ComponentType.Container) return false;
+    const footer = node.components
+      .filter((child: Node) => child.type === ComponentType.TextDisplay)
+      .at(-1)?.content;
+    return (
+      footer === prefix ||
+      (typeof footer === 'string' &&
+        footer.startsWith(prefix + ' · ') &&
+        /^<t:\d+:f>$/.test(footer.slice(prefix.length + 3)))
+    );
+  });
+}
+
 function text(content: string): Node {
   return { type: ComponentType.TextDisplay, content };
 }
@@ -102,7 +124,8 @@ function addControls(nodes: Node[], controls: Node[]) {
     });
 }
 
-// Legacy embed builders remain internal content templates. Every outbound payload is V2.
+// Embed builders here are content templates rendered as V2. Event logs explicitly
+// bypass this renderer to preserve Discord's round, inline embed-author avatar.
 function render<T extends Payload>(options: T) {
   const { content, embeds, components, flags, ...rest } = options;
   const nodes: Node[] = [];

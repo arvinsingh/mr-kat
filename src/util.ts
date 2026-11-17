@@ -1,8 +1,6 @@
 import { escapeMarkdown } from 'discord.js';
-export class UserError extends Error {}
-export function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) throw new UserError(message);
-}
+import { assert } from './errors.js';
+export { assert, UserError } from './errors.js';
 export function duration(text: string, max = 365 * 86400000): number {
   const match = /^(\d+)(s|m|h|d|w)$/i.exec(text.trim());
   assert(match, 'Use a duration such as 30m, 2h, 7d, or 1w.');

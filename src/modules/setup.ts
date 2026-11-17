@@ -1,3 +1,4 @@
+import { auditChange } from '../change-receipts.js';
 import {
   ActionRowBuilder,
   ButtonBuilder,
@@ -5,7 +6,6 @@ import {
   ChannelSelectMenuBuilder,
   RoleSelectMenuBuilder,
   StringSelectMenuBuilder,
-  ChannelType,
   PermissionFlagsBits as P,
 } from 'discord.js';
 import type { App, Interaction, Module } from '../types.js';
@@ -14,72 +14,9 @@ import { configSchema, logKinds } from '../config.js';
 import { assert, safe } from '../util.js';
 import { owner, requirePermission, safeRole } from '../permissions.js';
 import { confirm, readOnlyResponse, reply, type Confirmation } from '../ui.js';
-import { checkSetup, healthTopics, type HealthTopic } from '../setup-health.js';
+import { checkSetup } from '../setup-health.js';
+import { setupSettings as settings, healthTopics, type HealthTopic } from '../setup-settings.js';
 
-type Setting = { label: string; topic: HealthTopic; types?: ChannelType[]; roles?: number };
-const settings: Record<string, Setting> = {
-  logs: { label: 'All event log destinations', topic: 'logging', types: [ChannelType.GuildText] },
-  'logs.dm': { label: 'Private DM inbox', topic: 'logging', types: [ChannelType.GuildText] },
-  suggestionChannel: {
-    label: 'Suggestions destination',
-    topic: 'community',
-    types: [ChannelType.GuildText],
-  },
-  staffRoles: { label: 'Staff allowlist roles', topic: 'roles', roles: 10 },
-  selfRoles: { label: 'Bot self-service roles', topic: 'roles', roles: 25 },
-  joinRoles: { label: 'Automatic join roles', topic: 'onboarding', roles: 25 },
-  verifiedRole: { label: 'Optional verification role', topic: 'roles', roles: 1 },
-  voiceLobby: {
-    label: 'Join-to-create voice lobby',
-    topic: 'voice',
-    types: [ChannelType.GuildVoice],
-  },
-  voiceCategory: {
-    label: 'Temporary voice category',
-    topic: 'voice',
-    types: [ChannelType.GuildCategory],
-  },
-  voiceNoticeChannel: {
-    label: 'Voice creation notices',
-    topic: 'voice',
-    types: [ChannelType.GuildText],
-  },
-  supportChannel: {
-    label: 'Support panel channel',
-    topic: 'tickets',
-    types: [ChannelType.GuildText],
-  },
-  welcomeChannel: {
-    label: 'Join/exit message destination',
-    topic: 'onboarding',
-    types: [ChannelType.GuildText],
-  },
-  rulesChannel: {
-    label: 'Rules channel link',
-    topic: 'onboarding',
-    types: [ChannelType.GuildText],
-  },
-  introductionChannel: {
-    label: 'Introduction channel link',
-    topic: 'onboarding',
-    types: [ChannelType.GuildText],
-  },
-  'mentionReplies.commandsChannel': {
-    label: 'Commands channel link',
-    topic: 'community',
-    types: [ChannelType.GuildText],
-  },
-  'starboard.channel': {
-    label: 'Starboard destination',
-    topic: 'community',
-    types: [ChannelType.GuildText],
-  },
-  'heartbeat.channel': {
-    label: 'Heartbeat destination',
-    topic: 'automation',
-    types: [ChannelType.GuildText],
-  },
-};
 const icons = { ok: '✅', warn: '⚠️', error: '❌', off: '⏸️' };
 function current(cfg: GuildConfig, key: string): unknown {
   if (key === 'logs') return cfg.logs;
@@ -143,16 +80,8 @@ export async function validateSelection(app: App, i: Interaction, key: string, v
       channel && setting.types!.includes(channel.type),
       'Select an existing channel of the requested type.',
     );
-    const required = [P.ViewChannel];
-    if (['voiceCategory', 'ticketCategory'].includes(key))
-      required.push(P.ManageChannels, P.ManageRoles);
-    else if (key === 'voiceLobby') required.push(P.Connect, P.MoveMembers);
-    else if (
-      !['rulesChannel', 'introductionChannel', 'mentionReplies.commandsChannel'].includes(key)
-    )
-      required.push(P.SendMessages, P.EmbedLinks);
     assert(
-      channel.permissionsFor(me)?.has(required),
+      channel.permissionsFor(me)?.has(setting.permissions!),
       'The bot lacks required permissions in the selected channel. Fix its overrides and try again.',
     );
     if (key === 'logs' || key === 'logs.dm') {
@@ -293,11 +222,11 @@ export async function applyGuidedSetting(app: App, i: Interaction, pending: Conf
     'This setting changed after the preview. Reopen setup and review the current value.',
   );
   app.store.setConfig(i.guildId!, changed(cfg, key, values), i.user.id);
-  await app.audit(
-    i.guildId!,
-    'admin',
+  await auditChange(
+    app,
+    i,
     'Guided setup changed',
-    `Updated by <@${i.user.id}>. Setting: ${key}. Use /diagnose feature:${settings[key]!.topic} to check the result.`,
+    `Setting: ${key}. Use /diagnose feature:${settings[key]!.topic} to check the result.`,
     { force: true },
   );
   await reply(

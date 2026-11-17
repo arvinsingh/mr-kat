@@ -21,9 +21,6 @@ export class SpamDetector {
       for (const [k, v] of this.windows)
         if (!v.length || v[v.length - 1]!.time < message.time - 60000) this.windows.delete(k);
     if (this.windows.size > 2000) this.windows.delete(this.windows.keys().next().value!);
-    if (this.alerts.size > 2000)
-      for (const [k, t] of this.alerts) if (t < message.time - 60000) this.alerts.delete(k);
-    if ((this.alerts.get(key) ?? 0) > message.time - 15000) return;
     const normalized = message.content.toLowerCase().replace(/\s+/g, ' ').trim();
     let reason: string | undefined;
     if (window.length >= settings.messageLimit) reason = 'message flood';
@@ -59,7 +56,16 @@ export class SpamDetector {
       )
         reason = 'blocked domain';
     }
-    if (reason) this.alerts.set(key, message.time);
     return reason;
+  }
+  // Alert delivery is throttled independently; every offending message is still enforced.
+  shouldAlert(guild: string, user: string, time: number): boolean {
+    const key = `${guild}:${user}`;
+    const previous = this.alerts.get(key);
+    if (previous !== undefined && previous > time - 15000) return false;
+    this.alerts.delete(key);
+    this.alerts.set(key, time);
+    if (this.alerts.size > 2000) this.alerts.delete(this.alerts.keys().next().value!);
+    return true;
   }
 }

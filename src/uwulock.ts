@@ -11,11 +11,13 @@ import {
   type Webhook,
 } from 'discord.js';
 import { randomUUID } from 'node:crypto';
-import type { App } from './types.js';
+import type { App, AuditOptions } from './types.js';
+import { logText } from './log-format.js';
+import { logProfile } from './log-profile.js';
 import type { GuildConfig } from './config.js';
 import { checkHierarchy } from './permissions.js';
 import { transformText } from './text-effects.js';
-import { assert, safeMentions } from './util.js';
+import { assert, safe } from './util.js';
 import { noMentions } from './ui.js';
 
 export interface UwuLock {
@@ -290,8 +292,16 @@ function fingerprint(message: Message) {
 function unchanged(before: string, after: Message) {
   return before === fingerprint(after) && !after.pinned && !after.hasThread;
 }
-async function audit(app: App, title: string, text: string, kind: 'admin' | 'messages' = 'admin') {
-  await app.audit(app.guildId, kind, title, text).catch(() => undefined);
+async function audit(
+  app: App,
+  title: string,
+  text: string,
+  kind: 'admin' | 'messages' = 'admin',
+  options: AuditOptions = {},
+) {
+  await app
+    .audit(app.guildId, kind, title, text, { dividers: kind === 'messages', ...options })
+    .catch(() => undefined);
 }
 export async function uwuMessage(app: App, message: Message): Promise<boolean> {
   if (stopping.has(app)) return false;
@@ -452,7 +462,13 @@ export async function uwuMessage(app: App, message: Message): Promise<boolean> {
         await audit(
           app,
           'UwU conversion incomplete',
-          `Member <@${message.author.id}> in <#${message.channelId}>. ${original === 'present' ? 'Original retained.' : 'The original was deleted externally; its replacement was removed where possible.'} Review replacement ${sent.id} before retrying.`,
+          `${original === 'present' ? 'Original retained.' : 'The original was deleted externally; its replacement was removed where possible.'} Inspect the channel before retrying.`,
+          'admin',
+          {
+            profile: logProfile(app, message.author.id, message.member, message.author),
+            reference: `<#${message.channelId}>`,
+            footer: `Replacement ${sent.id}`,
+          },
         );
         return true;
       }
@@ -461,7 +477,13 @@ export async function uwuMessage(app: App, message: Message): Promise<boolean> {
         await audit(
           app,
           'UwU delivery needs review',
-          `Original ${message.id}, replacement ${sent.id} in <#${message.channelId}>. Delivery/deletion could not be confirmed; no automatic retry.`,
+          'Delivery/deletion could not be confirmed; no automatic retry.',
+          'admin',
+          {
+            profile: logProfile(app, message.author.id, message.member, message.author),
+            reference: `<#${message.channelId}>`,
+            footer: `Original ${message.id} · Replacement ${sent.id}`,
+          },
         );
         return true;
       }
@@ -474,8 +496,13 @@ export async function uwuMessage(app: App, message: Message): Promise<boolean> {
     await audit(
       app,
       'Message transformed · UwU Lock',
-      `Author: <@${message.author.id}> (${message.author.id})\nChannel: <#${message.channelId}>\nLock applied by: <@${lock.actor}>\nOriginal ID: ${message.id}\nReplacement: ${sent.url}\nOriginal text: ${safeMentions(input)}\nUwU text: ${safeMentions(displayed)}${message.attachments.size ? `\nForwarded attachments: ${[...message.attachments.values()].map((a) => `${safeMentions(a.name)} · ${a.url}`).join('\n')}` : ''}`,
+      `Before: ${logText(input)}\n---\nAfter: ${logText(displayed)}${message.attachments.size ? `\n---\nAttachments: ${[...message.attachments.values()].map((a) => `[${safe(a.name, 150)}](<${a.url}>)`).join('\n')}` : ''}`,
       'messages',
+      {
+        profile: logProfile(app, message.author.id, message.member, message.author),
+        reference: sent.url,
+        source: { channel: message.channelId, message: message.id, author: message.author.id },
+      },
     );
     return true;
   } catch {
@@ -483,7 +510,13 @@ export async function uwuMessage(app: App, message: Message): Promise<boolean> {
     await audit(
       app,
       'UwU conversion could not finish',
-      `Member <@${message.author.id}> in <#${message.channelId}> · Original ID ${message.id}. No automatic retry. Check permissions, webhook access and attachments. The original is kept unless a confirmed replacement was already sent.`,
+      'No automatic retry. Check permissions, webhook access and attachments. The original is kept unless a confirmed replacement was already sent.',
+      'admin',
+      {
+        profile: logProfile(app, message.author.id, message.member, message.author),
+        reference: `<#${message.channelId}>`,
+        source: { channel: message.channelId, message: message.id, author: message.author.id },
+      },
     );
     return true;
   } finally {
@@ -501,7 +534,9 @@ export async function expireUwuLocks(app: App) {
     await audit(
       app,
       'UwU lock expired',
-      `<@${data.author}> ${uwuScope(data.channel)} is unlocked. Applied by <@${data.actor}>.`,
+      `${uwuScope(data.channel)} is unlocked. Applied by <@${data.actor}>.`,
+      'admin',
+      { profile: logProfile(app, data.author) },
     );
   }
 }

@@ -24,8 +24,8 @@ export async function channelNotice(
         guild,
         'admin',
         'Channel notice could not be confirmed',
-        `${title} in <#${channel}>. The operation may already have completed. Check that channel and the bot's Send Messages / Embed Links permissions.`,
-        { force: true },
+        `${title}. The operation may already have completed. Check that channel and the bot's Send Messages / Embed Links permissions.`,
+        { force: true, reference: `<#${channel}>` },
       )
       .catch((failure) => logError('notice failure log', failure));
     return false;
