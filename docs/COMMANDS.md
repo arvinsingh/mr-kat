@@ -82,6 +82,8 @@ Owner: `/logs setup` provisions a separate private **bot-dms** destination. Ordi
 
 Staff with Manage Server and the configured staff allowlist use the thread’s **Reply** button or `/dm reply message:YOUR_REPLY`. Regular messages in the staff thread remain internal notes. Outgoing replies identify the server, without naming the staff member. Confession notifications and personal reminders are excluded; replies referencing those notifications are not forwarded. DM bodies remain in the private Discord threads; the bot stores routing/delivery metadata for the relay. Existing event log destinations are preserved until `/logs setup` is run.
 
+Welcome DMs and confirmed `/dm` notices share this logging path. Inbox access is validated using the same staff-privacy checks as other sensitive logs. A DM can arrive even if its inbox record fails; inspect `/logs status` or `/diagnose` → Logging for the failure reason. Host diagnostics retain safe Discord error codes without copying request bodies or private text. A failed inbox log never automatically resends the DM.
+
 ## Sticky notices
 
 `/sticky set text:NOTICE` keeps a notice near the bottom of the current channel. Each new message, including bot posts, components and embeds, restarts the server-wide inactivity wait (default ten minutes). The owner can change it with `/config set key:stickyDelayMinutes value:5`, then **Confirm**. Accepts 1–1440 whole minutes and applies to every existing and future sticky. Pending waits are recalculated from the last channel activity when this setting changes, including after restart. Previous sticky copies are removed, and sticky-generated gateway events are ignored to prevent loops. `/sticky remove` stops future refreshes.

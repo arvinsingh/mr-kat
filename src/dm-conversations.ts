@@ -19,29 +19,33 @@ import { directMessage, type Delivery } from './dm.js';
 import { serial } from './concurrency.js';
 import { sendLog, logText } from './log-format.js';
 import { logProfile } from './log-profile.js';
+import { privateLogChannel, reportLogFailure } from './logging.js';
+import { UserError } from './errors.js';
 
 interface Conversation {
   user: string;
   channel: string;
   thread: string;
 }
+export function reportDMInboxFailure(app: App, error: unknown) {
+  const code = (error as { code?: unknown } | null)?.code;
+  const description =
+    error instanceof UserError
+      ? error.message
+      : typeof code === 'number'
+        ? `Discord rejected the request (code ${code}). Check inbox access and thread permissions.`
+        : typeof code === 'string' && /^[A-Z_]{2,40}$/.test(code)
+          ? `Connection failed (${code}).`
+          : `Request failed (${error instanceof TypeError ? 'TypeError' : error instanceof RangeError ? 'RangeError' : 'Error'}).`;
+  // Never include DiscordAPIError.message/requestBody: those may contain DM text.
+  reportLogFailure(app, new UserError(`DM inbox: ${description}`));
+}
 async function conversation(app: App, user: string) {
   const cfg = app.store.config(app.guildId);
   assert(cfg.logs.dm, 'Configure the DM log channel with /logs setup.');
   const channel = await textChannel(app, app.guildId, cfg.logs.dm);
-  assert(
-    channel.type === ChannelType.GuildText &&
-      !channel.permissionsFor(channel.guild.roles.everyone)?.has(P.ViewChannel),
-    'The DM log must be a private text channel.',
-  );
-  for (const overwrite of channel.permissionOverwrites.cache.values()) {
-    if (!overwrite.allow.has(P.ViewChannel)) continue;
-    assert(
-      [app.client.user!.id, channel.guild.ownerId, ...cfg.staffRoles].includes(overwrite.id) ||
-        !!channel.guild.roles.cache.get(overwrite.id)?.permissions.has(P.Administrator),
-      'Remove non-staff View Channel overrides from the DM log.',
-    );
-  }
+  assert(channel.type === ChannelType.GuildText, 'The DM log must be a private text channel.');
+  await privateLogChannel(app, channel);
   await botPermission(
     channel.guild,
     [
@@ -167,7 +171,8 @@ export async function incomingDM(app: App, message: Message) {
           at: message.createdTimestamp,
         },
       );
-    } catch {
+    } catch (error) {
+      reportDMInboxFailure(app, error);
       app.store.put(app.guildId, 'dmReceipt', message.id, {
         state: 'uncertain',
         user: message.author.id,
@@ -184,7 +189,8 @@ export async function incomingDM(app: App, message: Message) {
       user: message.author.id,
       thread: thread.id,
     });
-  }).catch(async () => {
+  }).catch(async (error) => {
+    reportDMInboxFailure(app, error);
     await sendModern(message.author, {
       content: 'The staff inbox is unavailable. Contact staff in the server.',
       allowedMentions: noMentions,

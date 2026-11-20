@@ -102,6 +102,28 @@ export function logHealthText(app: App) {
   const h = logHealth(app);
   return `Queued/active: ${h.pending} · Delivered: ${h.sent}\nFailed: ${h.failed} · Partially delivered: ${h.partial} · Dropped: ${h.dropped} · Grouped warnings: ${h.grouped}\nLast issue: ${h.lastError ?? 'none'}${h.lastFailure ? ` · <t:${Math.floor(h.lastFailure / 1000)}:R>` : ''}\nCounters are retained across restarts; queued message bodies are not replayed.`;
 }
+// Direct inbox sends use per-user ordering rather than the event-log queue, but
+// their failures must still appear in the same persistent delivery diagnostics.
+export function reportLogFailure(app: App, error: unknown) {
+  const logger = instances.get(app);
+  if (logger) {
+    logger.recordFailure(error);
+    return;
+  }
+  const state = logHealth(app);
+  try {
+    app.store.put(app.guildId, 'system', 'logHealth', {
+      ...state,
+      failed: state.failed + 1,
+      lastError: errorText(error),
+      lastFailure: Date.now(),
+      pending: 0,
+    });
+  } catch (failure) {
+    logError('log health persistence', failure);
+  }
+  logError('log delivery', error);
+}
 export class AuditLogger {
   private queues = new Map<string, Task[]>();
   private running = new Map<string, Promise<void>>();
@@ -129,6 +151,9 @@ export class AuditLogger {
     this.state.lastFailure = Date.now();
     this.save();
     logError('log delivery', error);
+  }
+  recordFailure(error: unknown) {
+    this.failure(error);
   }
   private enqueue(channel: string, critical: boolean, run: Task['run']): Promise<string | void> {
     if (!this.accepting || this.state.pending >= (critical ? 500 : 100)) {

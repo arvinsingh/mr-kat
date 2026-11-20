@@ -5,7 +5,7 @@ import type { Tone } from './ui.js';
 import { safe } from './util.js';
 import { randomUUID } from 'node:crypto';
 import type { ActionRowBuilder, ButtonBuilder, AttachmentBuilder } from 'discord.js';
-import { logOutgoingDM } from './dm-conversations.js';
+import { logOutgoingDM, reportDMInboxFailure } from './dm-conversations.js';
 import { logProfile } from './log-profile.js';
 
 export type Delivery = 'sent' | 'blocked' | 'failed' | 'uncertain';
@@ -57,9 +57,7 @@ export async function directMessage(
       text,
       delivery,
       files.map((file) => file.name ?? 'Attachment'),
-    ).catch(() => {
-      console.warn('A DM delivery was processed, but its staff log could not be confirmed.');
-    });
+    ).catch((error) => reportDMInboxFailure(app, error));
   return delivery;
 }
 
